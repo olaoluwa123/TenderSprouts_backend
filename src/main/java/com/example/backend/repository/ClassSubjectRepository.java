@@ -1,0 +1,15 @@
+package com.example.backend.repository;
+
+import com.example.backend.entity.ClassSubject;
+import java.util.List;
+import java.util.Optional;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface ClassSubjectRepository extends JpaRepository<ClassSubject, Long> {
+
+    List<ClassSubject> findByClassId(Long classId);
+
+    Optional<ClassSubject> findByClassIdAndSubjectId(Long classId, Long subjectId);
+
+    long countByClassId(Long classId);
+}

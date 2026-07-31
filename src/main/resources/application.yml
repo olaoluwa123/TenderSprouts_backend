@@ -1,0 +1,141 @@
+spring:
+  application:
+    name: backend
+  config:
+    import: optional:file:.env[.properties]
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  datasource:
+    url: jdbc:h2:file:./data/school_portal;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+        format_sql: true
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:true}
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+          starttls:
+            enable: ${MAIL_STARTTLS:true}
+          ssl:
+            enable: ${MAIL_SSL:false}
+
+management:
+  health:
+    mail:
+      enabled: false
+
+app:
+  frontend:
+    origin: ${FRONTEND_ORIGIN:http://localhost:3000}
+  mail:
+    enabled: ${MAIL_ENABLED:false}
+    from: ${MAIL_FROM:noreply@school.local}
+  jwt:
+    secret: ${JWT_SECRET:dev-only-change-me-use-32-chars-minimum!!}
+    access-token-expiration-ms: ${JWT_ACCESS_EXPIRATION_MS:900000}
+    refresh-token-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:604800000}
+  auth:
+    max-failed-attempts: 5
+    max-failed-attempts-per-ip: 25
+    lockout-minutes: 15
+  security:
+    require-https: ${REQUIRE_HTTPS:false}
+    hsts-max-age-seconds: ${HSTS_MAX_AGE_SECONDS:31536000}
+    rate-limit:
+      enabled: ${RATE_LIMIT_ENABLED:true}
+      auth-requests-per-minute: ${RATE_LIMIT_AUTH_PER_MINUTE:10}
+      api-requests-per-minute: ${RATE_LIMIT_API_PER_MINUTE:120}
+  seed:
+    enabled: ${SEED_ENABLED:true}
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+server:
+  forward-headers-strategy: framework
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/school_portal}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+  jpa:
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+server:
+  ssl:
+    enabled: ${SSL_ENABLED:false}
+    key-store: ${SSL_KEY_STORE:}
+    key-store-password: ${SSL_KEY_STORE_PASSWORD:}
+    key-store-type: ${SSL_KEY_STORE_TYPE:PKCS12}
+
+app:
+  security:
+    require-https: ${REQUIRE_HTTPS:true}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+  mail:
+    host: localhost
+    port: 3025
+  datasource:
+    url: jdbc:h2:mem:school_portal_test;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  flyway:
+    enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+
+app:
+  seed:
+    enabled: false
+  mail:
+    enabled: false
+  security:
+    rate-limit:
+      enabled: false

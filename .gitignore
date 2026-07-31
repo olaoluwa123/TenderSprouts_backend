@@ -1,0 +1,15 @@
+/target/
+/.idea/
+*.iml
+/.vscode/
+*.log
+/.mvn/wrapper/maven-wrapper.jar
+.env
+.env.*
+!.env.example
+/data/
+/frontend/
+/agent-tools/
+/mcps/
+/terminals/
+*.class

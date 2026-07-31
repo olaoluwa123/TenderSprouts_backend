@@ -1,0 +1,229 @@
+package com.example.backend.config;
+
+import com.example.backend.entity.AcademicSession;
+import com.example.backend.entity.Admin;
+import com.example.backend.entity.ClassSubject;
+import com.example.backend.entity.Parent;
+import com.example.backend.entity.ParentStudent;
+import com.example.backend.entity.SchoolClass;
+import com.example.backend.entity.Student;
+import com.example.backend.entity.StudentEnrollment;
+import com.example.backend.entity.Subject;
+import com.example.backend.entity.Teacher;
+import com.example.backend.entity.TeacherClass;
+import com.example.backend.entity.Term;
+import com.example.backend.entity.User;
+import com.example.backend.entity.enums.EnrollmentStatus;
+import com.example.backend.entity.enums.Gender;
+import com.example.backend.repository.AcademicSessionRepository;
+import com.example.backend.repository.AdminRepository;
+import com.example.backend.repository.ClassSubjectRepository;
+import com.example.backend.repository.ParentRepository;
+import com.example.backend.repository.ParentStudentRepository;
+import com.example.backend.repository.SchoolClassRepository;
+import com.example.backend.repository.StudentEnrollmentRepository;
+import com.example.backend.repository.StudentRepository;
+import com.example.backend.repository.SubjectRepository;
+import com.example.backend.repository.TeacherClassRepository;
+import com.example.backend.repository.TeacherRepository;
+import com.example.backend.repository.TermRepository;
+import com.example.backend.repository.UserRepository;
+import com.example.backend.service.AcademicSessionService;
+import java.time.LocalDate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.context.annotation.Profile;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Component;
+
+@Component
+@Profile("!test")
+public class DevDataSeeder implements ApplicationRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(DevDataSeeder.class);
+
+    private final SeedProperties seedProperties;
+    private final UserRepository userRepository;
+    private final AdminRepository adminRepository;
+    private final TeacherRepository teacherRepository;
+    private final AcademicSessionRepository academicSessionRepository;
+    private final TermRepository termRepository;
+    private final SchoolClassRepository schoolClassRepository;
+    private final SubjectRepository subjectRepository;
+    private final StudentRepository studentRepository;
+    private final StudentEnrollmentRepository studentEnrollmentRepository;
+    private final ParentRepository parentRepository;
+    private final ParentStudentRepository parentStudentRepository;
+    private final TeacherClassRepository teacherClassRepository;
+    private final ClassSubjectRepository classSubjectRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final AcademicSessionService academicSessionService;
+
+    public DevDataSeeder(
+        SeedProperties seedProperties,
+        UserRepository userRepository,
+        AdminRepository adminRepository,
+        TeacherRepository teacherRepository,
+        AcademicSessionRepository academicSessionRepository,
+        TermRepository termRepository,
+        SchoolClassRepository schoolClassRepository,
+        SubjectRepository subjectRepository,
+        StudentRepository studentRepository,
+        StudentEnrollmentRepository studentEnrollmentRepository,
+        ParentRepository parentRepository,
+        ParentStudentRepository parentStudentRepository,
+        TeacherClassRepository teacherClassRepository,
+        ClassSubjectRepository classSubjectRepository,
+        PasswordEncoder passwordEncoder,
+        AcademicSessionService academicSessionService) {
+        this.seedProperties = seedProperties;
+        this.userRepository = userRepository;
+        this.adminRepository = adminRepository;
+        this.teacherRepository = teacherRepository;
+        this.academicSessionRepository = academicSessionRepository;
+        this.termRepository = termRepository;
+        this.schoolClassRepository = schoolClassRepository;
+        this.subjectRepository = subjectRepository;
+        this.studentRepository = studentRepository;
+        this.studentEnrollmentRepository = studentEnrollmentRepository;
+        this.parentRepository = parentRepository;
+        this.parentStudentRepository = parentStudentRepository;
+        this.teacherClassRepository = teacherClassRepository;
+        this.classSubjectRepository = classSubjectRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.academicSessionService = academicSessionService;
+    }
+
+    @Override
+    public void run(ApplicationArguments args) {
+        if (!seedProperties.isEnabled()) {
+            return;
+        }
+        ensureStandardAcademicSessions();
+        if (userRepository.findByEmail("admin@school.local").isPresent()) {
+            return;
+        }
+        log.info("Seeding development data");
+
+        User adminUser = new User();
+        adminUser.setEmail("admin@school.local");
+        adminUser.setPassword(passwordEncoder.encode("admin123"));
+        adminUser.setRole(User.Role.ADMIN);
+        adminUser.setIsActive(true);
+        adminUser = userRepository.save(adminUser);
+
+        Admin admin = new Admin();
+        admin.setUserId(adminUser.getId());
+        admin.setFullName("School Admin");
+        adminRepository.save(admin);
+
+        User teacherUser = new User();
+        teacherUser.setEmail("teacher@school.local");
+        teacherUser.setPassword(passwordEncoder.encode("teacher123"));
+        teacherUser.setRole(User.Role.TEACHER);
+        teacherUser.setIsActive(true);
+        teacherUser = userRepository.save(teacherUser);
+
+        Teacher teacher = new Teacher();
+        teacher.setUserId(teacherUser.getId());
+        teacher.setFullName("Jane Teacher");
+        teacher = teacherRepository.save(teacher);
+
+        User parentUser = new User();
+        parentUser.setEmail("parent@school.local");
+        parentUser.setPassword(passwordEncoder.encode("parent123"));
+        parentUser.setRole(User.Role.PARENT);
+        parentUser.setIsActive(true);
+        parentUser = userRepository.save(parentUser);
+
+        Parent parent = new Parent();
+        parent.setUserId(parentUser.getId());
+        parent.setFullName("John Parent");
+        parent.setPhone("555-0100");
+        parent = parentRepository.save(parent);
+
+        AcademicSession session = academicSessionRepository.findFirstByIsActiveTrue().orElseThrow();
+
+        academicSessionService.ensureDefaultTermsIfMissing(session.getId());
+
+        SchoolClass schoolClass = new SchoolClass();
+        schoolClass.setName("JSS 1A");
+        schoolClass = schoolClassRepository.save(schoolClass);
+
+        TeacherClass teacherClass = new TeacherClass();
+        teacherClass.setTeacherId(teacher.getId());
+        teacherClass.setClassId(schoolClass.getId());
+        teacherClass.setIsActive(true);
+        teacherClassRepository.save(teacherClass);
+
+        Student student = new Student();
+        student.setFirstName("Ada");
+        student.setLastName("Okafor");
+        student.setAdmissionNumber("ADM-001");
+        student.setGender(Gender.FEMALE);
+        student.setClassId(schoolClass.getId());
+        student.setIsActive(true);
+        student = studentRepository.save(student);
+
+        StudentEnrollment enrollment = new StudentEnrollment();
+        enrollment.setStudentId(student.getId());
+        enrollment.setClassId(schoolClass.getId());
+        enrollment.setSessionId(session.getId());
+        enrollment.setStatus(EnrollmentStatus.ACTIVE);
+        enrollment.setStartDate(LocalDate.now());
+        enrollment = studentEnrollmentRepository.save(enrollment);
+        student.setCurrentEnrollmentId(enrollment.getId());
+        studentRepository.save(student);
+
+        ParentStudent parentStudent = new ParentStudent();
+        parentStudent.setParentId(parent.getId());
+        parentStudent.setStudentId(student.getId());
+        parentStudentRepository.save(parentStudent);
+
+        Subject math = new Subject();
+        math.setName("Mathematics");
+        math = subjectRepository.save(math);
+
+        ClassSubject classMath = new ClassSubject();
+        classMath.setClassId(schoolClass.getId());
+        classMath.setSubjectId(math.getId());
+        classMath.setIsActive(true);
+        classSubjectRepository.save(classMath);
+    }
+
+    private void ensureStandardAcademicSessions() {
+        AcademicSession session2025 = ensureSession(
+            "2025/2026",
+            LocalDate.of(2025, 9, 1),
+            LocalDate.of(2026, 7, 31),
+            true);
+        academicSessionService.ensureDefaultTermsIfMissing(session2025.getId());
+        AcademicSession session2026 = ensureSession(
+            "2026/2027",
+            LocalDate.of(2026, 9, 1),
+            LocalDate.of(2027, 7, 31),
+            false);
+        academicSessionService.ensureDefaultTermsIfMissing(session2026.getId());
+    }
+
+    private AcademicSession ensureSession(
+        String name,
+        LocalDate startDate,
+        LocalDate endDate,
+        boolean activeIfCreated) {
+        return academicSessionRepository.findAll().stream()
+            .filter(session -> name.equals(session.getName()))
+            .findFirst()
+            .orElseGet(() -> {
+                AcademicSession session = new AcademicSession();
+                session.setName(name);
+                session.setStartDate(startDate);
+                session.setEndDate(endDate);
+                session.setIsActive(activeIfCreated);
+                log.info("Ensured academic session {}", name);
+                return academicSessionRepository.save(session);
+            });
+    }
+}
