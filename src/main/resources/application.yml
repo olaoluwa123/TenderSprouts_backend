@@ -76,21 +76,25 @@ springdoc:
     path: /swagger-ui.html
 
 server:
+  port: ${PORT:8080}
   forward-headers-strategy: framework
 
 ---
+# Railway / production: H2 on a persistent volume at /data (override with DB_URL if needed).
 spring:
   config:
     activate:
       on-profile: prod
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/school_portal}
-    username: ${DB_USERNAME:root}
+    url: ${DB_URL:jdbc:h2:file:/data/school_portal;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH}
+    username: ${DB_USERNAME:sa}
     password: ${DB_PASSWORD:}
+    driver-class-name: ${DB_DRIVER:org.h2.Driver}
   jpa:
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.MySQLDialect
+        dialect: ${HIBERNATE_DIALECT:org.hibernate.dialect.H2Dialect}
+        format_sql: false
 
 management:
   endpoints:
@@ -99,6 +103,7 @@ management:
         include: health,info
 
 server:
+  port: ${PORT:8080}
   ssl:
     enabled: ${SSL_ENABLED:false}
     key-store: ${SSL_KEY_STORE:}
@@ -106,6 +111,12 @@ server:
     key-store-type: ${SSL_KEY_STORE_TYPE:PKCS12}
 
 app:
+  frontend:
+    origin: ${FRONTEND_ORIGIN}
+  jwt:
+    secret: ${JWT_SECRET}
+  seed:
+    enabled: ${SEED_ENABLED:false}
   security:
     require-https: ${REQUIRE_HTTPS:true}
 

@@ -1,0 +1,17 @@
+target/
+.git/
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example
+data/
+frontend/
+agent-tools/
+mcps/
+terminals/
+*.md
+!DEPLOY.md
+*.iml
+*.log
+**/node_modules/
