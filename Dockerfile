@@ -9,8 +9,6 @@ RUN mvn -B -DskipTests package
 FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
 
-RUN mkdir -p /data
-
 COPY --from=build /app/target/*.jar /app/app.jar
 
 ENV SPRING_PROFILES_ACTIVE=prod

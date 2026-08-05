@@ -80,20 +80,21 @@ server:
   forward-headers-strategy: framework
 
 ---
-# Railway / production: H2 on a persistent volume at /data (override with DB_URL if needed).
+# Production (Railway, etc.): MySQL. Local default above stays H2.
+# Prefer DB_URL / DB_USERNAME / DB_PASSWORD, or Railway MySQL plugin vars (MYSQLHOST, …).
 spring:
   config:
     activate:
       on-profile: prod
   datasource:
-    url: ${DB_URL:jdbc:h2:file:/data/school_portal;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH}
-    username: ${DB_USERNAME:sa}
-    password: ${DB_PASSWORD:}
-    driver-class-name: ${DB_DRIVER:org.h2.Driver}
+    url: ${DB_URL:jdbc:mysql://${MYSQLHOST:localhost}:${MYSQLPORT:3306}/${MYSQLDATABASE:school_portal}?characterEncoding=UTF-8&useUnicode=true&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=${MYSQL_USE_SSL:true}&requireSSL=${MYSQL_REQUIRE_SSL:false}}
+    username: ${DB_USERNAME:${MYSQLUSER:root}}
+    password: ${DB_PASSWORD:${MYSQLPASSWORD:}}
+    driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     properties:
       hibernate:
-        dialect: ${HIBERNATE_DIALECT:org.hibernate.dialect.H2Dialect}
+        dialect: org.hibernate.dialect.MySQLDialect
         format_sql: false
 
 management:
