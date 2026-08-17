@@ -8,6 +8,8 @@ public record UpdateStudentRequest(
     String lastName,
     LocalDate dateOfBirth,
     Gender gender,
-    Boolean isActive
+    Boolean isActive,
+    String address,
+    String medicalInformation
 ) {
 }

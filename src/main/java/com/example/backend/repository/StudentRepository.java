@@ -1,6 +1,7 @@
 package com.example.backend.repository;
 
 import com.example.backend.entity.Student;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -14,7 +15,13 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
 
     Optional<Student> findByAdmissionNumber(String admissionNumber);
 
+    List<Student> findTop8ByOrderByCreatedAtDesc();
+
     Page<Student> findByClassId(Long classId, Pageable pageable);
+
+    List<Student> findByClassId(Long classId);
+
+    long countByClassId(Long classId);
 
     @Query("""
         SELECT s FROM Student s

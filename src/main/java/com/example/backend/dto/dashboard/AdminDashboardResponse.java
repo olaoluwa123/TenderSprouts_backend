@@ -12,6 +12,11 @@ public record AdminDashboardResponse(
     List<ClassPerformanceItem> classPerformance,
     List<GradeDistributionBucket> gradeDistribution,
     List<PendingApprovalItem> pendingApprovals,
+    List<AdmissionApplicationItem> newAdmissions,
+    List<RecentPupilItem> recentPupils,
+    List<UpcomingEventItem> upcomingEvents,
+    List<AnnouncementItem> announcements,
+    AttendanceSummary attendanceSummary,
     List<ActivityItem> recentActivity
 ) {
 }

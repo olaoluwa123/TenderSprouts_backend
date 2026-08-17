@@ -7,15 +7,19 @@ import com.example.backend.entity.Parent;
 import com.example.backend.entity.ParentStudent;
 import com.example.backend.entity.Student;
 import com.example.backend.entity.User;
+import com.example.backend.entity.enums.InvoiceStatus;
 import com.example.backend.exception.ForbiddenException;
 import com.example.backend.exception.ResourceNotFoundException;
 import com.example.backend.repository.GradeRepository;
+import com.example.backend.repository.InvoiceRepository;
 import com.example.backend.repository.ParentRepository;
 import com.example.backend.repository.ParentStudentRepository;
+import com.example.backend.repository.SchoolClassRepository;
 import com.example.backend.repository.StudentRepository;
 import com.example.backend.repository.SubjectRepository;
 import com.example.backend.repository.TermResultRepository;
 import com.example.backend.security.SecurityUser;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -26,30 +30,36 @@ import org.springframework.stereotype.Service;
 @Service
 public class ParentDashboardService {
 
-    private static final int LATEST_GRADES_LIMIT = 5;
+    private static final int LATEST_GRADES_LIMIT = 40;
 
     private final ParentRepository parentRepository;
     private final ParentStudentRepository parentStudentRepository;
     private final StudentRepository studentRepository;
+    private final SchoolClassRepository schoolClassRepository;
     private final GradeRepository gradeRepository;
     private final SubjectRepository subjectRepository;
     private final TermResultRepository termResultRepository;
+    private final InvoiceRepository invoiceRepository;
     private final ActiveSessionService activeSessionService;
 
     public ParentDashboardService(
         ParentRepository parentRepository,
         ParentStudentRepository parentStudentRepository,
         StudentRepository studentRepository,
+        SchoolClassRepository schoolClassRepository,
         GradeRepository gradeRepository,
         SubjectRepository subjectRepository,
         TermResultRepository termResultRepository,
+        InvoiceRepository invoiceRepository,
         ActiveSessionService activeSessionService) {
         this.parentRepository = parentRepository;
         this.parentStudentRepository = parentStudentRepository;
         this.studentRepository = studentRepository;
+        this.schoolClassRepository = schoolClassRepository;
         this.gradeRepository = gradeRepository;
         this.subjectRepository = subjectRepository;
         this.termResultRepository = termResultRepository;
+        this.invoiceRepository = invoiceRepository;
         this.activeSessionService = activeSessionService;
     }
 
@@ -88,12 +98,28 @@ public class ParentDashboardService {
 
     private ChildDashboardSummary buildChildSummary(Student student, Long sessionId) {
         List<ParentDashboardGradeItem> latestGrades = loadLatestGrades(student.getId(), sessionId);
+        BigDecimal outstanding = invoiceRepository
+            .findByStudentIdAndStatus(student.getId(), InvoiceStatus.PENDING)
+            .stream()
+            .map(invoice -> invoice.getAmount() == null ? BigDecimal.ZERO : invoice.getAmount())
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         return new ChildDashboardSummary(
             student.getId(),
             formatStudentName(student),
             student.getAdmissionNumber(),
+            resolveClassName(student.getClassId()),
+            outstanding,
             latestGrades);
+    }
+
+    private String resolveClassName(Long classId) {
+        if (classId == null) {
+            return null;
+        }
+        return schoolClassRepository.findById(classId)
+            .map(schoolClass -> schoolClass.getName())
+            .orElse(null);
     }
 
     private List<ParentDashboardGradeItem> loadLatestGrades(Long studentId, Long sessionId) {

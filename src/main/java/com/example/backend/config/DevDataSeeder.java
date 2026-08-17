@@ -2,9 +2,13 @@ package com.example.backend.config;
 
 import com.example.backend.entity.AcademicSession;
 import com.example.backend.entity.Admin;
+import com.example.backend.entity.AdmissionApplication;
+import com.example.backend.entity.Announcement;
+import com.example.backend.entity.Attendance;
 import com.example.backend.entity.ClassSubject;
 import com.example.backend.entity.Parent;
 import com.example.backend.entity.ParentStudent;
+import com.example.backend.entity.SchoolCalendarEvent;
 import com.example.backend.entity.SchoolClass;
 import com.example.backend.entity.Student;
 import com.example.backend.entity.StudentEnrollment;
@@ -13,13 +17,20 @@ import com.example.backend.entity.Teacher;
 import com.example.backend.entity.TeacherClass;
 import com.example.backend.entity.Term;
 import com.example.backend.entity.User;
+import com.example.backend.entity.enums.AdmissionApplicationStatus;
+import com.example.backend.entity.enums.AttendanceStatus;
+import com.example.backend.entity.enums.CalendarEventType;
 import com.example.backend.entity.enums.EnrollmentStatus;
 import com.example.backend.entity.enums.Gender;
 import com.example.backend.repository.AcademicSessionRepository;
 import com.example.backend.repository.AdminRepository;
+import com.example.backend.repository.AdmissionApplicationRepository;
+import com.example.backend.repository.AnnouncementRepository;
+import com.example.backend.repository.AttendanceRepository;
 import com.example.backend.repository.ClassSubjectRepository;
 import com.example.backend.repository.ParentRepository;
 import com.example.backend.repository.ParentStudentRepository;
+import com.example.backend.repository.SchoolCalendarEventRepository;
 import com.example.backend.repository.SchoolClassRepository;
 import com.example.backend.repository.StudentEnrollmentRepository;
 import com.example.backend.repository.StudentRepository;
@@ -58,6 +69,10 @@ public class DevDataSeeder implements ApplicationRunner {
     private final ParentStudentRepository parentStudentRepository;
     private final TeacherClassRepository teacherClassRepository;
     private final ClassSubjectRepository classSubjectRepository;
+    private final AdmissionApplicationRepository admissionApplicationRepository;
+    private final AnnouncementRepository announcementRepository;
+    private final SchoolCalendarEventRepository schoolCalendarEventRepository;
+    private final AttendanceRepository attendanceRepository;
     private final PasswordEncoder passwordEncoder;
     private final AcademicSessionService academicSessionService;
 
@@ -76,6 +91,10 @@ public class DevDataSeeder implements ApplicationRunner {
         ParentStudentRepository parentStudentRepository,
         TeacherClassRepository teacherClassRepository,
         ClassSubjectRepository classSubjectRepository,
+        AdmissionApplicationRepository admissionApplicationRepository,
+        AnnouncementRepository announcementRepository,
+        SchoolCalendarEventRepository schoolCalendarEventRepository,
+        AttendanceRepository attendanceRepository,
         PasswordEncoder passwordEncoder,
         AcademicSessionService academicSessionService) {
         this.seedProperties = seedProperties;
@@ -92,6 +111,10 @@ public class DevDataSeeder implements ApplicationRunner {
         this.parentStudentRepository = parentStudentRepository;
         this.teacherClassRepository = teacherClassRepository;
         this.classSubjectRepository = classSubjectRepository;
+        this.admissionApplicationRepository = admissionApplicationRepository;
+        this.announcementRepository = announcementRepository;
+        this.schoolCalendarEventRepository = schoolCalendarEventRepository;
+        this.attendanceRepository = attendanceRepository;
         this.passwordEncoder = passwordEncoder;
         this.academicSessionService = academicSessionService;
     }
@@ -102,9 +125,13 @@ public class DevDataSeeder implements ApplicationRunner {
             return;
         }
         ensureStandardAcademicSessions();
-        if (userRepository.findByEmail("admin@school.local").isPresent()) {
-            return;
+        if (userRepository.findByEmail("admin@school.local").isEmpty()) {
+            seedCoreAccounts();
         }
+        ensureDashboardSampleData();
+    }
+
+    private void seedCoreAccounts() {
         log.info("Seeding development data");
 
         User adminUser = new User();
@@ -191,6 +218,101 @@ public class DevDataSeeder implements ApplicationRunner {
         classMath.setSubjectId(math.getId());
         classMath.setIsActive(true);
         classSubjectRepository.save(classMath);
+    }
+
+    private void ensureDashboardSampleData() {
+        AcademicSession session = academicSessionRepository.findFirstByIsActiveTrue().orElse(null);
+        if (session == null) {
+            return;
+        }
+        Term term = termRepository.findFirstBySessionIdAndIsActiveTrue(session.getId()).orElse(null);
+        SchoolClass schoolClass = schoolClassRepository.findAll().stream().findFirst().orElse(null);
+        Long classId = schoolClass != null ? schoolClass.getId() : null;
+        User adminUser = userRepository.findByEmail("admin@school.local").orElse(null);
+
+        if (admissionApplicationRepository.count() == 0) {
+            AdmissionApplication pending = new AdmissionApplication();
+            pending.setApplicantFirstName("Zainab");
+            pending.setApplicantLastName("Bello");
+            pending.setDateOfBirth(LocalDate.of(2018, 3, 12));
+            pending.setGender(Gender.FEMALE);
+            pending.setProspectiveClassId(classId);
+            pending.setParentFullName("Aisha Bello");
+            pending.setParentEmail("aisha.bello@example.com");
+            pending.setParentPhone("08030001122");
+            pending.setStatus(AdmissionApplicationStatus.PENDING);
+            pending.setNotes("Interested in nursery intake");
+            admissionApplicationRepository.save(pending);
+
+            AdmissionApplication pending2 = new AdmissionApplication();
+            pending2.setApplicantFirstName("Ibrahim");
+            pending2.setApplicantLastName("Musa");
+            pending2.setDateOfBirth(LocalDate.of(2017, 11, 2));
+            pending2.setGender(Gender.MALE);
+            pending2.setProspectiveClassId(classId);
+            pending2.setParentFullName("Fatima Musa");
+            pending2.setParentEmail("fatima.musa@example.com");
+            pending2.setParentPhone("08030003344");
+            pending2.setStatus(AdmissionApplicationStatus.PENDING);
+            admissionApplicationRepository.save(pending2);
+        }
+
+        if (announcementRepository.count() == 0 && adminUser != null) {
+            Announcement one = new Announcement();
+            one.setTitle("Welcome back for the new term");
+            one.setContent("Classes resume on Monday. Please ensure pupils arrive by 7:45am.");
+            one.setCreatedBy(adminUser.getId());
+            one.setIsImportant(true);
+            announcementRepository.save(one);
+
+            Announcement two = new Announcement();
+            two.setTitle("Parents' briefing");
+            two.setContent("A short briefing for new parents will hold in the school hall this Friday.");
+            two.setCreatedBy(adminUser.getId());
+            two.setIsImportant(true);
+            announcementRepository.save(two);
+        }
+
+        if (schoolCalendarEventRepository.count() == 0) {
+            SchoolCalendarEvent openDay = new SchoolCalendarEvent();
+            openDay.setTitle("Open Day");
+            openDay.setStartDate(LocalDate.now().plusDays(10));
+            openDay.setEndDate(LocalDate.now().plusDays(10));
+            openDay.setEventType(CalendarEventType.GENERAL);
+            openDay.setDescription("Tour of classrooms and meet the teachers.");
+            schoolCalendarEventRepository.save(openDay);
+
+            SchoolCalendarEvent midTerm = new SchoolCalendarEvent();
+            midTerm.setTitle("Mid-term assessments");
+            midTerm.setStartDate(LocalDate.now().plusDays(21));
+            midTerm.setEndDate(LocalDate.now().plusDays(25));
+            midTerm.setEventType(CalendarEventType.EXAM);
+            midTerm.setDescription("Continuous assessment week.");
+            schoolCalendarEventRepository.save(midTerm);
+
+            SchoolCalendarEvent holiday = new SchoolCalendarEvent();
+            holiday.setTitle("Public holiday");
+            holiday.setStartDate(LocalDate.now().plusDays(35));
+            holiday.setEventType(CalendarEventType.HOLIDAY);
+            schoolCalendarEventRepository.save(holiday);
+        }
+
+        if (attendanceRepository.count() == 0 && classId != null) {
+            Student student = studentRepository.findAll().stream().findFirst().orElse(null);
+            if (student != null) {
+                Attendance present = new Attendance();
+                present.setStudentId(student.getId());
+                present.setClassId(classId);
+                present.setSessionId(session.getId());
+                present.setTermId(term != null ? term.getId() : null);
+                present.setDate(LocalDate.now());
+                present.setStatus(AttendanceStatus.PRESENT);
+                if (adminUser != null) {
+                    present.setMarkedBy(adminUser.getId());
+                }
+                attendanceRepository.save(present);
+            }
+        }
     }
 
     private void ensureStandardAcademicSessions() {

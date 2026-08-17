@@ -10,9 +10,14 @@ public record ParentListResponse(
     String fullName,
     String phone,
     Boolean isActive,
+    Boolean loginActive,
     List<LinkedStudentSummary> students
 ) {
-    public static ParentListResponse from(Parent parent, String email, List<LinkedStudentSummary> students) {
+    public static ParentListResponse from(
+        Parent parent,
+        String email,
+        Boolean loginActive,
+        List<LinkedStudentSummary> students) {
         return new ParentListResponse(
             parent.getId(),
             parent.getUserId(),
@@ -20,6 +25,7 @@ public record ParentListResponse(
             parent.getFullName(),
             parent.getPhone(),
             parent.getIsActive(),
+            loginActive,
             students);
     }
 }

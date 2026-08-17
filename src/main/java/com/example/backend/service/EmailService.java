@@ -32,25 +32,36 @@ public class EmailService {
         String greeting = recipientName != null && !recipientName.isBlank()
             ? "Dear " + recipientName + ","
             : "Hello,";
-        String subject = "Your school portal account";
+        String roleDisplay = roleLabel != null && !roleLabel.isBlank()
+            ? roleLabel.trim().toLowerCase()
+            : "staff";
+        String subject = "Welcome to Tender Sprouts - your portal login";
         String body = """
             %s
 
-            An administrator has created your %s school portal account.
+            Welcome to the Tender Sprouts School portal.
 
-            Sign in with:
+            An administrator has set up your %s account so you can access the school system online.
+
+            --------------------------------
+            Your sign-in details
+            --------------------------------
             Email: %s
             Temporary password: %s
 
-            Login here:
+            Sign in here:
             %s
 
-            You will be asked to choose a new password immediately after your first sign-in.
+            Important: on your first sign-in you will be asked to choose a new password.
+            You must complete that step before using the portal.
 
-            If you did not expect this email, contact the school office.
+            Keep this temporary password private. Do not share it with anyone.
 
-            Thank you.
-            """.formatted(greeting, roleLabel, toEmail, temporaryPassword, loginUrl);
+            If you did not expect this email, please contact the school office and ignore these details.
+
+            Warm regards,
+            Tender Sprouts School
+            """.formatted(greeting, roleDisplay, toEmail, temporaryPassword, loginUrl);
         send(toEmail, subject, body.trim());
     }
 

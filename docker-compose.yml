@@ -1,0 +1,50 @@
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: school_portal
+      MYSQL_USER: ${DB_USERNAME:-school}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-schoolpass}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-schoolroot}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  backend:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      REQUIRE_HTTPS: ${REQUIRE_HTTPS:-false}
+      MYSQL_USE_SSL: "false"
+      DB_URL: jdbc:mysql://mysql:3306/school_portal?characterEncoding=UTF-8&useUnicode=true&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
+      DB_USERNAME: ${DB_USERNAME:-school}
+      DB_PASSWORD: ${DB_PASSWORD:-schoolpass}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+      JWT_SECRET: ${JWT_SECRET:-docker-local-change-me-use-32-chars-min}
+      SEED_ENABLED: ${SEED_ENABLED:-true}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
+volumes:
+  mysql_data:

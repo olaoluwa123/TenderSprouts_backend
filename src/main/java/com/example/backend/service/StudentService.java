@@ -3,6 +3,7 @@ package com.example.backend.service;
 import com.example.backend.dto.student.BulkPromoteRequest;
 import com.example.backend.dto.student.BulkPromoteResponse;
 import com.example.backend.dto.student.BulkPromoteResultItem;
+import com.example.backend.dto.parent.LinkParentStudentRequest;
 import com.example.backend.dto.parent.OnboardParentForStudentRequest;
 import com.example.backend.dto.parent.ParentResponse;
 import com.example.backend.dto.student.CreateEnrollmentRequest;
@@ -19,6 +20,7 @@ import com.example.backend.entity.enums.EnrollmentStatus;
 import com.example.backend.exception.ConflictException;
 import com.example.backend.exception.ResourceNotFoundException;
 import com.example.backend.repository.AcademicSessionRepository;
+import com.example.backend.repository.ParentStudentRepository;
 import com.example.backend.repository.SchoolClassRepository;
 import com.example.backend.repository.StudentEnrollmentRepository;
 import com.example.backend.repository.StudentRepository;
@@ -40,6 +42,7 @@ public class StudentService {
     private final StudentEnrollmentRepository studentEnrollmentRepository;
     private final SchoolClassRepository schoolClassRepository;
     private final AcademicSessionRepository academicSessionRepository;
+    private final ParentStudentRepository parentStudentRepository;
     private final ActiveSessionService activeSessionService;
     private final AuditService auditService;
     private final ParentService parentService;
@@ -49,6 +52,7 @@ public class StudentService {
         StudentEnrollmentRepository studentEnrollmentRepository,
         SchoolClassRepository schoolClassRepository,
         AcademicSessionRepository academicSessionRepository,
+        ParentStudentRepository parentStudentRepository,
         ActiveSessionService activeSessionService,
         AuditService auditService,
         ParentService parentService) {
@@ -56,27 +60,37 @@ public class StudentService {
         this.studentEnrollmentRepository = studentEnrollmentRepository;
         this.schoolClassRepository = schoolClassRepository;
         this.academicSessionRepository = academicSessionRepository;
+        this.parentStudentRepository = parentStudentRepository;
         this.activeSessionService = activeSessionService;
         this.auditService = auditService;
         this.parentService = parentService;
     }
 
     public Page<StudentResponse> list(Long classId, Long sessionId, String search, Pageable pageable) {
+        Page<Student> page;
         if (sessionId != null) {
-            return studentRepository.findByActiveEnrollment(sessionId, classId, pageable)
-                .map(StudentResponse::from);
+            page = studentRepository.findByActiveEnrollment(sessionId, classId, pageable);
+        } else if (search != null && !search.isBlank()) {
+            page = studentRepository.search(classId, search.trim(), pageable);
+        } else if (classId != null) {
+            page = studentRepository.findByClassId(classId, pageable);
+        } else {
+            page = studentRepository.findAll(pageable);
         }
-        if (search != null && !search.isBlank()) {
-            return studentRepository.search(classId, search.trim(), pageable).map(StudentResponse::from);
-        }
-        if (classId != null) {
-            return studentRepository.findByClassId(classId, pageable).map(StudentResponse::from);
-        }
-        return studentRepository.findAll(pageable).map(StudentResponse::from);
+        return mapWithParentLinks(page);
     }
 
     public StudentResponse getById(Long id) {
-        return StudentResponse.from(findStudent(id));
+        Student student = findStudent(id);
+        return StudentResponse.from(student, parentStudentRepository.existsByStudentId(id));
+    }
+
+    private Page<StudentResponse> mapWithParentLinks(Page<Student> page) {
+        List<Long> ids = page.getContent().stream().map(Student::getId).toList();
+        Set<Long> linked = ids.isEmpty()
+            ? Set.of()
+            : new HashSet<>(parentStudentRepository.findLinkedStudentIds(ids));
+        return page.map(student -> StudentResponse.from(student, linked.contains(student.getId())));
     }
 
     @Transactional
@@ -131,6 +145,13 @@ public class StudentService {
     }
 
     @Transactional
+    public StudentResponse createForParent(Long parentId, CreateStudentRequest request, SecurityUser actor) {
+        StudentResponse student = create(request, actor);
+        parentService.linkStudent(parentId, new LinkParentStudentRequest(student.id()), actor);
+        return student;
+    }
+
+    @Transactional
     public StudentResponse update(Long id, UpdateStudentRequest request, SecurityUser actor) {
         Student student = findStudent(id);
         if (request.firstName() != null) {
@@ -147,6 +168,12 @@ public class StudentService {
         }
         if (request.isActive() != null) {
             student.setIsActive(request.isActive());
+        }
+        if (request.address() != null) {
+            student.setAddress(request.address());
+        }
+        if (request.medicalInformation() != null) {
+            student.setMedicalInformation(request.medicalInformation());
         }
         Student saved = studentRepository.save(student);
         auditService.logAdminAction(actor, "UPDATE", "student", saved.getId(), null);

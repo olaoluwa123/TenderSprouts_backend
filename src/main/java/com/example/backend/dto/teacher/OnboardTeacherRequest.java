@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotBlank;
 public record OnboardTeacherRequest(
     @NotBlank @Email String email,
     @NotBlank String fullName,
-    String phone
+    String phone,
+    Long classId
 ) {
 }

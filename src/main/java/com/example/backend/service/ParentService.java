@@ -7,6 +7,7 @@ import com.example.backend.dto.parent.OnboardParentForStudentRequest;
 import com.example.backend.dto.parent.ParentListResponse;
 import com.example.backend.dto.parent.ParentMeResponse;
 import com.example.backend.dto.parent.ParentResponse;
+import com.example.backend.dto.parent.UpdateParentMeRequest;
 import com.example.backend.dto.student.StudentResponse;
 import com.example.backend.entity.Parent;
 import com.example.backend.entity.ParentStudent;
@@ -78,6 +79,25 @@ public class ParentService {
             parent.getFullName(),
             parent.getPhone(),
             children);
+    }
+
+    @Transactional
+    public ParentMeResponse updateMe(UpdateParentMeRequest request, SecurityUser actor) {
+        if (actor.getRole() != User.Role.PARENT || actor.getProfileId() == null) {
+            throw new ForbiddenException("Parent profile required");
+        }
+        Parent parent = parentRepository.findById(actor.getProfileId())
+            .orElseThrow(() -> new ResourceNotFoundException("Parent not found"));
+        if (request.fullName() != null && !request.fullName().isBlank()) {
+            parent.setFullName(request.fullName().trim());
+        }
+        if (request.phone() != null) {
+            String phone = request.phone().trim();
+            parent.setPhone(phone.isEmpty() ? null : phone);
+        }
+        parentRepository.save(parent);
+        auditService.logAdminAction(actor, "UPDATE", "parent_profile", parent.getId(), parent.getFullName());
+        return getMe(actor);
     }
 
     public Page<ParentListResponse> list(SecurityUser actor, Long classId, Pageable pageable) {
@@ -246,9 +266,9 @@ public class ParentService {
     }
 
     private ParentListResponse toListResponse(Parent parent, Set<Long> classIds) {
-        String email = userRepository.findById(parent.getUserId())
-            .map(User::getEmail)
-            .orElse(null);
+        var user = userRepository.findById(parent.getUserId()).orElse(null);
+        String email = user != null ? user.getEmail() : null;
+        Boolean loginActive = user != null ? user.getIsActive() : null;
         List<LinkedStudentSummary> students = parentStudentRepository.findByParentId(parent.getId()).stream()
             .map(ParentStudent::getStudentId)
             .map(studentRepository::findById)
@@ -258,6 +278,6 @@ public class ParentService {
                 || (student.getClassId() != null && classIds.contains(student.getClassId())))
             .map(LinkedStudentSummary::from)
             .toList();
-        return ParentListResponse.from(parent, email, students);
+        return ParentListResponse.from(parent, email, loginActive, students);
     }
 }

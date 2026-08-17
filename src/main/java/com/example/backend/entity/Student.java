@@ -48,6 +48,12 @@ public class Student extends AuditableEntity {
     @Column(name = "is_active")
     private Boolean isActive = true;
 
+    @Column(name = "address", columnDefinition = "TEXT")
+    private String address;
+
+    @Column(name = "medical_information", columnDefinition = "TEXT")
+    private String medicalInformation;
+
     public Student() {
     }
 
@@ -129,5 +135,21 @@ public class Student extends AuditableEntity {
 
     public void setIsActive(Boolean isActive) {
         this.isActive = isActive;
+    }
+
+    public String getAddress() {
+        return address;
+    }
+
+    public void setAddress(String address) {
+        this.address = address;
+    }
+
+    public String getMedicalInformation() {
+        return medicalInformation;
+    }
+
+    public void setMedicalInformation(String medicalInformation) {
+        this.medicalInformation = medicalInformation;
     }
 }

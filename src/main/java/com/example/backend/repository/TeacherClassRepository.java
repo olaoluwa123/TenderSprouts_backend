@@ -15,5 +15,7 @@ public interface TeacherClassRepository extends JpaRepository<TeacherClass, Long
 
     List<TeacherClass> findByTeacherIdAndIsActiveTrue(Long teacherId);
 
+    List<TeacherClass> findByClassIdAndIsActiveTrue(Long classId);
+
     long countByIsActiveTrue();
 }

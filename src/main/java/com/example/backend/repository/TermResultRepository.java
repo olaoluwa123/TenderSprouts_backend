@@ -18,6 +18,8 @@ public interface TermResultRepository extends JpaRepository<TermResult, Long>, J
 
     List<TermResult> findByStudentIdAndPublishedAtIsNotNull(Long studentId);
 
+    List<TermResult> findByStudentIdOrderByCreatedAtDesc(Long studentId);
+
     List<TermResult> findByTermId(Long termId);
 
     @Query("""

@@ -4,6 +4,8 @@ public record KpiSummary(
     long activeStudents,
     long activeTeachers,
     long activeParents,
-    long classes
+    long classes,
+    long subjects,
+    long pendingApplications
 ) {
 }

@@ -206,6 +206,14 @@ class DashboardIntegrationTest {
             .andExpect(jsonPath("$.kpis.activeTeachers").value(1))
             .andExpect(jsonPath("$.kpis.activeParents").value(1))
             .andExpect(jsonPath("$.kpis.classes").value(2))
+            .andExpect(jsonPath("$.kpis.subjects").value(0))
+            .andExpect(jsonPath("$.kpis.pendingApplications").value(0))
+            .andExpect(jsonPath("$.newAdmissions").isArray())
+            .andExpect(jsonPath("$.recentPupils").isArray())
+            .andExpect(jsonPath("$.recentPupils[0].fullName").value("Dash Student"))
+            .andExpect(jsonPath("$.upcomingEvents").isArray())
+            .andExpect(jsonPath("$.announcements").isArray())
+            .andExpect(jsonPath("$.attendanceSummary.enrolled").value(1))
             .andExpect(jsonPath("$.submissionFunnel.submitted").value(1))
             .andExpect(jsonPath("$.submissionFunnel.published").value(0))
             .andExpect(jsonPath("$.pendingApprovals.length()").value(1))
@@ -232,6 +240,21 @@ class DashboardIntegrationTest {
         mockMvc.perform(get("/api/dashboard/teacher")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + teacherToken))
             .andExpect(status().isOk());
+    }
+
+    @Test
+    void adminActivityEndpointReturnsOk() throws Exception {
+        mockMvc.perform(get("/api/dashboard/activity")
+                .param("limit", "100")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$").isArray());
+
+        mockMvc.perform(get("/api/dashboard/admin/activity")
+                .param("limit", "10")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$").isArray());
     }
 
     @Test

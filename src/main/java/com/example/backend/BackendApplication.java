@@ -4,6 +4,7 @@ import com.example.backend.config.AppFrontendProperties;
 import com.example.backend.config.AppMailProperties;
 import com.example.backend.config.AuthProperties;
 import com.example.backend.config.JwtProperties;
+import com.example.backend.config.PaystackProperties;
 import com.example.backend.config.SecurityProperties;
 import com.example.backend.config.SeedProperties;
 import org.springframework.boot.SpringApplication;
@@ -17,7 +18,8 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
     SeedProperties.class,
     AppMailProperties.class,
     AppFrontendProperties.class,
-    SecurityProperties.class
+    SecurityProperties.class,
+    PaystackProperties.class
 })
 public class BackendApplication {
 

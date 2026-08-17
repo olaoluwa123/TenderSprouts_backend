@@ -8,6 +8,7 @@ import com.example.backend.dto.student.EnrollmentResponse;
 import com.example.backend.dto.student.ImportCsvResponse;
 import com.example.backend.dto.student.OnboardStudentWithParentRequest;
 import com.example.backend.dto.student.OnboardStudentWithParentResponse;
+import com.example.backend.dto.student.StudentProfileResponse;
 import com.example.backend.dto.student.StudentResponse;
 import com.example.backend.dto.student.UpdateStudentRequest;
 import com.example.backend.security.SecurityUtils;
@@ -18,6 +19,7 @@ import com.example.backend.dto.grade.SaveStudentGradesRequest;
 import com.example.backend.service.AuthorizationService;
 import com.example.backend.service.GradeService;
 import com.example.backend.service.StudentCsvImportService;
+import com.example.backend.service.StudentProfileService;
 import com.example.backend.service.StudentService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -43,6 +45,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class StudentController {
 
     private final StudentService studentService;
+    private final StudentProfileService studentProfileService;
     private final ParentService parentService;
     private final GradeService gradeService;
     private final AuthorizationService authorizationService;
@@ -50,11 +53,13 @@ public class StudentController {
 
     public StudentController(
         StudentService studentService,
+        StudentProfileService studentProfileService,
         ParentService parentService,
         GradeService gradeService,
         AuthorizationService authorizationService,
         StudentCsvImportService studentCsvImportService) {
         this.studentService = studentService;
+        this.studentProfileService = studentProfileService;
         this.parentService = parentService;
         this.gradeService = gradeService;
         this.authorizationService = authorizationService;
@@ -74,6 +79,12 @@ public class StudentController {
     public StudentResponse getById(@PathVariable Long id) {
         authorizationService.requireParentOrStaffForStudentRead(SecurityUtils.requireCurrentUser(), id);
         return studentService.getById(id);
+    }
+
+    @GetMapping("/{id}/profile")
+    public StudentProfileResponse getProfile(@PathVariable Long id) {
+        authorizationService.requireParentOrStaffForStudentRead(SecurityUtils.requireCurrentUser(), id);
+        return studentProfileService.getProfile(id);
     }
 
     @PostMapping

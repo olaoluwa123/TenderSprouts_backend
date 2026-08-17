@@ -1,12 +1,15 @@
 package com.example.backend.controller;
 
+import com.example.backend.dto.dashboard.ActivityItem;
 import com.example.backend.dto.user.ForcePasswordResetResponse;
+import com.example.backend.dto.user.UpdateUserRoleRequest;
 import com.example.backend.dto.user.UpdateUserStatusRequest;
 import com.example.backend.dto.user.UserResponse;
 import com.example.backend.entity.User;
 import com.example.backend.security.SecurityUtils;
 import com.example.backend.service.UserManagementService;
 import jakarta.validation.Valid;
+import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -43,11 +46,23 @@ public class UserController {
         return userManagementService.getById(id);
     }
 
+    @GetMapping("/{id}/activity")
+    public List<ActivityItem> activity(@PathVariable Long id) {
+        return userManagementService.listActivity(id);
+    }
+
     @PatchMapping("/{id}/status")
     public UserResponse updateStatus(
         @PathVariable Long id,
         @Valid @RequestBody UpdateUserStatusRequest request) {
         return userManagementService.updateStatus(id, request, SecurityUtils.requireCurrentUser());
+    }
+
+    @PatchMapping("/{id}/role")
+    public UserResponse updateRole(
+        @PathVariable Long id,
+        @Valid @RequestBody UpdateUserRoleRequest request) {
+        return userManagementService.updateRole(id, request, SecurityUtils.requireCurrentUser());
     }
 
     @PostMapping("/{id}/force-password-reset")

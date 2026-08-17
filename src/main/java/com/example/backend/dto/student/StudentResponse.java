@@ -13,9 +13,16 @@ public record StudentResponse(
     Gender gender,
     Long classId,
     Long currentEnrollmentId,
-    Boolean isActive
+    Boolean isActive,
+    String address,
+    String medicalInformation,
+    boolean linkedToParent
 ) {
     public static StudentResponse from(Student student) {
+        return from(student, false);
+    }
+
+    public static StudentResponse from(Student student, boolean linkedToParent) {
         return new StudentResponse(
             student.getId(),
             student.getFirstName(),
@@ -25,6 +32,9 @@ public record StudentResponse(
             student.getGender(),
             student.getClassId(),
             student.getCurrentEnrollmentId(),
-            student.getIsActive());
+            student.getIsActive(),
+            student.getAddress(),
+            student.getMedicalInformation(),
+            linkedToParent);
     }
 }

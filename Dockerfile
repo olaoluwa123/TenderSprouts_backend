@@ -9,6 +9,10 @@ RUN mvn -B -DskipTests package
 FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wget \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /app/target/*.jar /app/app.jar
 
 ENV SPRING_PROFILES_ACTIVE=prod

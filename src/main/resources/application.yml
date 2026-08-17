@@ -68,6 +68,10 @@ app:
       api-requests-per-minute: ${RATE_LIMIT_API_PER_MINUTE:120}
   seed:
     enabled: ${SEED_ENABLED:true}
+  paystack:
+    enabled: ${PAYSTACK_ENABLED:false}
+    secret-key: ${PAYSTACK_SECRET_KEY:}
+    public-key: ${PAYSTACK_PUBLIC_KEY:}
 
 springdoc:
   api-docs:
