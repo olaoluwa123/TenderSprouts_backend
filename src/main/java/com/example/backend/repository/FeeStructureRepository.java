@@ -15,4 +15,6 @@ public interface FeeStructureRepository extends JpaRepository<FeeStructure, Long
 
     List<FeeStructure> findByClassIdAndTermIdAndPublishedAtIsNotNullAndIsActiveTrueOrderByNameAsc(
         Long classId, Long termId);
+
+    List<FeeStructure> findByTermIdOrderByNameAsc(Long termId);
 }

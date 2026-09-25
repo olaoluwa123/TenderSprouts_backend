@@ -1,5 +1,6 @@
 package com.example.backend.admin;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -16,6 +17,8 @@ import com.example.backend.repository.ParentStudentRepository;
 import com.example.backend.repository.SchoolClassRepository;
 import com.example.backend.repository.StudentRepository;
 import com.example.backend.repository.UserRepository;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.UUID;
@@ -30,6 +33,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 @SpringBootTest(properties = "app.seed.enabled=false")
 @AutoConfigureMockMvc
@@ -38,6 +42,9 @@ class StudentCsvImportIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Autowired
     private UserRepository userRepository;
@@ -104,10 +111,12 @@ class StudentCsvImportIntegrationTest {
             Chidi,Okonkwo,CSV-002,%s,MALE,2010-07-22,sibling.parent@school.local,Mrs Sibling Parent,08011111111
             """.stripIndent().formatted(className, className);
 
-        mockMvc.perform(multipart("/api/students/import-csv")
-                .file(csvFile(csv))
+        long jobId = enqueueImport(csv);
+
+        mockMvc.perform(get("/api/students/import-csv/jobs/" + jobId)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
             .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("COMPLETED"))
             .andExpect(jsonPath("$.totalRows").value(2))
             .andExpect(jsonPath("$.successCount").value(2))
             .andExpect(jsonPath("$.failureCount").value(0))
@@ -131,10 +140,12 @@ class StudentCsvImportIntegrationTest {
             Ada,Okonkwo,CSV-003,Unknown Class,FEMALE,,parent3@school.local,Parent Three,
             """.stripIndent();
 
-        mockMvc.perform(multipart("/api/students/import-csv")
-                .file(csvFile(csv))
+        long jobId = enqueueImport(csv);
+
+        mockMvc.perform(get("/api/students/import-csv/jobs/" + jobId)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
             .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("COMPLETED"))
             .andExpect(jsonPath("$.successCount").value(0))
             .andExpect(jsonPath("$.failureCount").value(1))
             .andExpect(jsonPath("$.rows[0].status").value("FAILED"))
@@ -149,10 +160,12 @@ class StudentCsvImportIntegrationTest {
             Chidi,Okonkwo,CSV-DUP,%s,MALE,,dup2@school.local,Parent Two,
             """.stripIndent().formatted(className, className);
 
-        mockMvc.perform(multipart("/api/students/import-csv")
-                .file(csvFile(csv))
+        long jobId = enqueueImport(csv);
+
+        mockMvc.perform(get("/api/students/import-csv/jobs/" + jobId)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
             .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("COMPLETED"))
             .andExpect(jsonPath("$.successCount").value(1))
             .andExpect(jsonPath("$.failureCount").value(1))
             .andExpect(jsonPath("$.rows[1].message").value("Duplicate admission number in file: CSV-DUP"));
@@ -170,6 +183,17 @@ class StudentCsvImportIntegrationTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.message").value("Missing required CSV column: parent_email"));
+    }
+
+    private long enqueueImport(String csv) throws Exception {
+        MvcResult accepted = mockMvc.perform(multipart("/api/students/import-csv")
+                .file(csvFile(csv))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+            .andExpect(status().isAccepted())
+            .andExpect(jsonPath("$.jobId").isNumber())
+            .andReturn();
+        JsonNode body = objectMapper.readTree(accepted.getResponse().getContentAsString());
+        return body.get("jobId").asLong();
     }
 
     private MockMultipartFile csvFile(String content) {

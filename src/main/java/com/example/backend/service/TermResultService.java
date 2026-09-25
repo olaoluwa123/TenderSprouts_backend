@@ -1,5 +1,6 @@
 package com.example.backend.service;
 
+import com.example.backend.config.AppFrontendProperties;
 import com.example.backend.dto.termresult.ComputeTermResultsRequest;
 import com.example.backend.dto.termresult.PublishTermResultsRequest;
 import com.example.backend.dto.termresult.SubmitTermResultsRequest;
@@ -11,6 +12,7 @@ import com.example.backend.entity.AssessmentTypeLookup;
 import com.example.backend.entity.Grade;
 import com.example.backend.entity.ParentStudent;
 import com.example.backend.entity.SchoolClass;
+import com.example.backend.entity.Student;
 import com.example.backend.entity.StudentEnrollment;
 import com.example.backend.entity.Teacher;
 import com.example.backend.entity.Term;
@@ -24,26 +26,30 @@ import com.example.backend.exception.ForbiddenException;
 import com.example.backend.exception.ResourceNotFoundException;
 import com.example.backend.repository.AssessmentTypeLookupRepository;
 import com.example.backend.repository.GradeRepository;
-import com.example.backend.config.AppFrontendProperties;
 import com.example.backend.repository.ParentStudentRepository;
 import com.example.backend.repository.SchoolClassRepository;
 import com.example.backend.repository.StudentEnrollmentRepository;
+import com.example.backend.repository.StudentRepository;
 import com.example.backend.repository.TermRepository;
 import com.example.backend.repository.TermResultRepository;
 import com.example.backend.repository.TermResultSubmissionRepository;
 import com.example.backend.repository.TeacherClassRepository;
 import com.example.backend.repository.TeacherRepository;
 import com.example.backend.security.SecurityUser;
+import com.example.backend.email.EmailAttachment;
 import jakarta.persistence.criteria.Predicate;
 import com.example.backend.util.GradeScoringUtil;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -52,6 +58,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class TermResultService {
+
+    private static final Logger log = LoggerFactory.getLogger(TermResultService.class);
 
     private final TermResultRepository termResultRepository;
     private final TermResultSubmissionRepository termResultSubmissionRepository;
@@ -63,8 +71,10 @@ public class TermResultService {
     private final TeacherClassRepository teacherClassRepository;
     private final TeacherRepository teacherRepository;
     private final ParentStudentRepository parentStudentRepository;
-    private final ParentEmailService parentEmailService;
+    private final StudentRepository studentRepository;
+    private final ParentNotifyService parentNotifyService;
     private final EmailService emailService;
+    private final ReportCardService reportCardService;
     private final AppFrontendProperties frontendProperties;
     private final AuthorizationService authorizationService;
     private final AuditService auditService;
@@ -81,8 +91,10 @@ public class TermResultService {
         TeacherClassRepository teacherClassRepository,
         TeacherRepository teacherRepository,
         ParentStudentRepository parentStudentRepository,
-        ParentEmailService parentEmailService,
+        StudentRepository studentRepository,
+        ParentNotifyService parentNotifyService,
         EmailService emailService,
+        ReportCardService reportCardService,
         AppFrontendProperties frontendProperties,
         AuthorizationService authorizationService,
         AuditService auditService,
@@ -97,8 +109,10 @@ public class TermResultService {
         this.teacherClassRepository = teacherClassRepository;
         this.teacherRepository = teacherRepository;
         this.parentStudentRepository = parentStudentRepository;
-        this.parentEmailService = parentEmailService;
+        this.studentRepository = studentRepository;
+        this.parentNotifyService = parentNotifyService;
         this.emailService = emailService;
+        this.reportCardService = reportCardService;
         this.frontendProperties = frontendProperties;
         this.authorizationService = authorizationService;
         this.auditService = auditService;
@@ -262,12 +276,6 @@ public class TermResultService {
         authorizationService.requireTeacherForClass(actor, request.classId());
         activeTermService.requireMatchesActiveTermForWrite(request.termId(), actor);
 
-        List<TermResult> results = termResultRepository.findByClassIdAndTermIdOrderByAverageScoreDesc(
-            request.classId(), request.termId());
-        if (results.isEmpty()) {
-            throw new ResourceNotFoundException("Compute results before submitting to admin");
-        }
-
         TermResultSubmission submission = getOrCreateSubmission(
             request.classId(), request.termId(), request.sessionId());
         if (submission.getStatus() == TermResultSubmissionStatus.PUBLISHED) {
@@ -277,6 +285,17 @@ public class TermResultService {
             throw new ConflictException("Results already submitted to admin");
         }
 
+        compute(new ComputeTermResultsRequest(request.termId(), request.classId(), request.sessionId()), actor);
+
+        List<TermResult> results = termResultRepository.findByClassIdAndTermIdOrderByAverageScoreDesc(
+            request.classId(), request.termId());
+        if (results.isEmpty()) {
+            throw new ResourceNotFoundException(
+                "No results to submit. Enter grades for pupils in this class first.");
+        }
+
+        submission = termResultSubmissionRepository.findByClassIdAndTermId(request.classId(), request.termId())
+            .orElseThrow(() -> new ResourceNotFoundException("Submission not found"));
         submission.setStatus(TermResultSubmissionStatus.SUBMITTED);
         submission.setSubmittedAt(LocalDateTime.now());
         submission.setSubmittedByTeacherId(actor.getProfileId());
@@ -326,14 +345,51 @@ public class TermResultService {
         termResultSubmissionRepository.save(submission);
 
         if (!publishedStudentIds.isEmpty()) {
-            String portalUrl = frontendProperties.getOrigin().replaceAll("/$", "") + "/results";
-            parentEmailService.emailParentsForStudents(
+            Term term = termRepository.findById(request.termId()).orElse(null);
+            String termName = term != null ? term.getName() : "this term";
+            String portalUrl = frontendProperties.getOrigin().replaceAll("/$", "") + "/parent/results";
+
+            Map<Long, EmailAttachment> pdfByStudentId = new HashMap<>();
+            for (Long studentId : publishedStudentIds) {
+                try {
+                    byte[] pdf = reportCardService.generatePdfForPublished(studentId, request.termId());
+                    Student student = studentRepository.findById(studentId).orElse(null);
+                    String admission = student != null && student.getAdmissionNumber() != null
+                        ? student.getAdmissionNumber().replaceAll("[^A-Za-z0-9_-]", "_")
+                        : String.valueOf(studentId);
+                    String termSlug = termName.replaceAll("[^A-Za-z0-9_-]+", "_");
+                    String filename = "ReportCard_" + admission + "_" + termSlug + ".pdf";
+                    pdfByStudentId.put(
+                        studentId,
+                        new EmailAttachment(filename, "application/pdf", pdf));
+                } catch (Exception ex) {
+                    log.warn(
+                        "Could not generate report card PDF for studentId={} termId={}",
+                        studentId,
+                        request.termId(),
+                        ex);
+                }
+            }
+
+            parentNotifyService.notifyParentsForStudents(
                 publishedStudentIds,
-                (user, parent) -> emailService.sendTermResultsPublished(
-                    user.getEmail(),
-                    parent.getFullName(),
-                    String.join(", ", parentEmailService.childNamesForParent(parent.getId())),
-                    portalUrl));
+                (user, parent) -> {
+                    List<Long> childIds = parentNotifyService.linkedStudentIdsForParent(
+                        parent.getId(), publishedStudentIds);
+                    List<String> childNames = parentNotifyService.childNamesForParent(
+                        parent.getId(), publishedStudentIds);
+                    List<EmailAttachment> attachments = childIds.stream()
+                        .map(pdfByStudentId::get)
+                        .filter(java.util.Objects::nonNull)
+                        .toList();
+                    emailService.sendTermResultsPublished(
+                        user.getEmail(),
+                        parent.getFullName(),
+                        String.join(", ", childNames),
+                        termName,
+                        portalUrl,
+                        attachments);
+                });
         }
 
         auditService.logAdminAction(
@@ -344,6 +400,34 @@ public class TermResultService {
             "termId=" + request.termId());
 
         return results.stream().map(TermResultResponse::from).toList();
+    }
+
+    @Transactional
+    public TermResultSubmissionResponse reject(PublishTermResultsRequest request, SecurityUser actor) {
+        if (actor.getRole() != User.Role.ADMIN) {
+            throw new ForbiddenException("Only admins can reject submitted results");
+        }
+
+        TermResultSubmission submission = termResultSubmissionRepository
+            .findByClassIdAndTermId(request.classId(), request.termId())
+            .orElseThrow(() -> new ResourceNotFoundException("No submitted results found for this class and term"));
+        if (submission.getStatus() != TermResultSubmissionStatus.SUBMITTED) {
+            throw new ConflictException("Only submitted results awaiting review can be sent back");
+        }
+
+        submission.setStatus(TermResultSubmissionStatus.DRAFT);
+        submission.setSubmittedAt(null);
+        submission.setSubmittedByTeacherId(null);
+        submission = termResultSubmissionRepository.save(submission);
+
+        auditService.logAdminAction(
+            actor,
+            "REJECT",
+            "term_result_submission",
+            submission.getId(),
+            "classId=" + request.classId() + ",termId=" + request.termId());
+
+        return TermResultSubmissionResponse.from(submission);
     }
 
     @Transactional

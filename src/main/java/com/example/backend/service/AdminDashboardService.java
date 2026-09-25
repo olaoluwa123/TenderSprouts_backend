@@ -13,6 +13,7 @@ import com.example.backend.dto.dashboard.RecentPupilItem;
 import com.example.backend.dto.dashboard.SubmissionFunnel;
 import com.example.backend.dto.dashboard.UpcomingEventItem;
 import com.example.backend.entity.AcademicSession;
+import com.example.backend.entity.Admin;
 import com.example.backend.entity.AdmissionApplication;
 import com.example.backend.entity.Announcement;
 import com.example.backend.entity.AuditLog;
@@ -29,6 +30,7 @@ import com.example.backend.entity.enums.AttendanceStatus;
 import com.example.backend.entity.enums.EnrollmentStatus;
 import com.example.backend.entity.enums.TermResultSubmissionStatus;
 import com.example.backend.exception.ForbiddenException;
+import com.example.backend.repository.AdminRepository;
 import com.example.backend.repository.AdmissionApplicationRepository;
 import com.example.backend.repository.AnnouncementRepository;
 import com.example.backend.repository.AttendanceRepository;
@@ -72,6 +74,7 @@ public class AdminDashboardService {
     private final TermResultSubmissionRepository termResultSubmissionRepository;
     private final TermRepository termRepository;
     private final TeacherRepository teacherRepository;
+    private final AdminRepository adminRepository;
     private final AuditLogRepository auditLogRepository;
     private final AdmissionApplicationRepository admissionApplicationRepository;
     private final AnnouncementRepository announcementRepository;
@@ -90,6 +93,7 @@ public class AdminDashboardService {
         TermResultSubmissionRepository termResultSubmissionRepository,
         TermRepository termRepository,
         TeacherRepository teacherRepository,
+        AdminRepository adminRepository,
         AuditLogRepository auditLogRepository,
         AdmissionApplicationRepository admissionApplicationRepository,
         AnnouncementRepository announcementRepository,
@@ -106,6 +110,7 @@ public class AdminDashboardService {
         this.termResultSubmissionRepository = termResultSubmissionRepository;
         this.termRepository = termRepository;
         this.teacherRepository = teacherRepository;
+        this.adminRepository = adminRepository;
         this.auditLogRepository = auditLogRepository;
         this.admissionApplicationRepository = admissionApplicationRepository;
         this.announcementRepository = announcementRepository;
@@ -165,9 +170,45 @@ public class AdminDashboardService {
             throw new ForbiddenException("Admin access required");
         }
         int capped = Math.max(1, Math.min(limit, 100));
-        return auditLogRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, capped)).stream()
-            .map(this::toActivityItem)
+        List<AuditLog> logs = auditLogRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, capped));
+        Map<Long, String> namesByUserId = resolveActorNames(logs);
+        return logs.stream()
+            .map(log -> toActivityItem(log, namesByUserId.get(log.getUserId())))
             .toList();
+    }
+
+    private Map<Long, String> resolveActorNames(List<AuditLog> logs) {
+        List<Long> userIds = logs.stream()
+            .map(AuditLog::getUserId)
+            .filter(id -> id != null)
+            .distinct()
+            .toList();
+        if (userIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, String> emails = userRepository.findAllById(userIds).stream()
+            .filter(user -> user.getEmail() != null && !user.getEmail().isBlank())
+            .collect(Collectors.toMap(User::getId, User::getEmail));
+        Map<Long, String> adminNames = adminRepository.findByUserIdIn(userIds).stream()
+            .filter(admin -> admin.getFullName() != null && !admin.getFullName().isBlank())
+            .collect(Collectors.toMap(Admin::getUserId, Admin::getFullName, (a, b) -> a));
+        Map<Long, String> teacherNames = teacherRepository.findByUserIdIn(userIds).stream()
+            .filter(teacher -> teacher.getFullName() != null && !teacher.getFullName().isBlank())
+            .collect(Collectors.toMap(Teacher::getUserId, Teacher::getFullName, (a, b) -> a));
+        Map<Long, String> names = new LinkedHashMap<>();
+        for (Long userId : userIds) {
+            String name = adminNames.get(userId);
+            if (name == null || name.isBlank()) {
+                name = teacherNames.get(userId);
+            }
+            if (name == null || name.isBlank()) {
+                name = emails.get(userId);
+            }
+            if (name != null && !name.isBlank()) {
+                names.put(userId, name);
+            }
+        }
+        return names;
     }
 
     private List<AdmissionApplicationItem> buildNewAdmissions(Map<Long, String> classNames) {
@@ -371,7 +412,8 @@ public class AdminDashboardService {
             submission.getSubmittedAt());
     }
 
-    private ActivityItem toActivityItem(AuditLog log) {
+    private ActivityItem toActivityItem(AuditLog log, String userName) {
+        String resolvedName = userName != null && !userName.isBlank() ? userName : "System";
         return new ActivityItem(
             log.getId(),
             log.getAction(),
@@ -379,6 +421,7 @@ public class AdminDashboardService {
             log.getEntityId(),
             log.getDetails(),
             log.getUserRole(),
+            resolvedName,
             log.getCreatedAt());
     }
 }

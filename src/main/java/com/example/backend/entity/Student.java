@@ -54,6 +54,12 @@ public class Student extends AuditableEntity {
     @Column(name = "medical_information", columnDefinition = "TEXT")
     private String medicalInformation;
 
+    @Column(name = "height", length = 50)
+    private String height;
+
+    @Column(name = "weight", length = 50)
+    private String weight;
+
     public Student() {
     }
 
@@ -151,5 +157,21 @@ public class Student extends AuditableEntity {
 
     public void setMedicalInformation(String medicalInformation) {
         this.medicalInformation = medicalInformation;
+    }
+
+    public String getHeight() {
+        return height;
+    }
+
+    public void setHeight(String height) {
+        this.height = height;
+    }
+
+    public String getWeight() {
+        return weight;
+    }
+
+    public void setWeight(String weight) {
+        this.weight = weight;
     }
 }

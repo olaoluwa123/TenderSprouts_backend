@@ -1,67 +1,133 @@
 package com.example.backend.service;
 
-import com.example.backend.dto.teacher.TeacherImportCsvResponse;
+import com.example.backend.dto.student.ImportCsvJobAcceptedResponse;
+import com.example.backend.dto.teacher.TeacherImportCsvJobResponse;
 import com.example.backend.dto.teacher.TeacherImportCsvRowResult;
+import com.example.backend.entity.CsvImportJob;
+import com.example.backend.entity.enums.CsvImportJobStatus;
+import com.example.backend.entity.enums.CsvImportJobType;
 import com.example.backend.exception.BadRequestException;
+import com.example.backend.exception.ResourceNotFoundException;
+import com.example.backend.importhub.TeacherCsvImportPublisher;
+import com.example.backend.repository.CsvImportJobRepository;
+import com.example.backend.security.CustomUserDetailsService;
 import com.example.backend.security.SecurityUser;
 import com.example.backend.util.CsvParser;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class TeacherCsvImportService {
+
+    private static final Logger log = LoggerFactory.getLogger(TeacherCsvImportService.class);
 
     private static final int MAX_FILE_BYTES = 2 * 1024 * 1024;
     private static final int MAX_ROWS = 500;
     private static final List<String> REQUIRED_HEADERS = List.of("email", "full_name");
 
     private final TeacherCsvImportRowService rowService;
+    private final CsvImportJobRepository csvImportJobRepository;
+    private final TeacherCsvImportPublisher teacherCsvImportPublisher;
+    private final CustomUserDetailsService customUserDetailsService;
+    private final ObjectMapper objectMapper;
 
-    public TeacherCsvImportService(TeacherCsvImportRowService rowService) {
+    public TeacherCsvImportService(
+        TeacherCsvImportRowService rowService,
+        CsvImportJobRepository csvImportJobRepository,
+        TeacherCsvImportPublisher teacherCsvImportPublisher,
+        CustomUserDetailsService customUserDetailsService,
+        ObjectMapper objectMapper) {
         this.rowService = rowService;
+        this.csvImportJobRepository = csvImportJobRepository;
+        this.teacherCsvImportPublisher = teacherCsvImportPublisher;
+        this.customUserDetailsService = customUserDetailsService;
+        this.objectMapper = objectMapper;
     }
 
-    public TeacherImportCsvResponse importFile(MultipartFile file, SecurityUser actor) {
-        if (file == null || file.isEmpty()) {
-            throw new BadRequestException("CSV file is required");
+    public ImportCsvJobAcceptedResponse enqueueImport(MultipartFile file, SecurityUser actor) {
+        ValidatedCsv validated = validateAndRead(file);
+
+        CsvImportJob job = new CsvImportJob();
+        job.setType(CsvImportJobType.TEACHER);
+        job.setStatus(CsvImportJobStatus.PENDING);
+        job.setActorUserId(actor.getUserId());
+        job.setOriginalFilename(file.getOriginalFilename());
+        job.setFileBytes(validated.bytes());
+        job.setTotalRows(validated.dataRowCount());
+        job = csvImportJobRepository.save(job);
+
+        boolean published = teacherCsvImportPublisher.publish(job.getId());
+        if (!published) {
+            executeJob(job.getId());
+            job = csvImportJobRepository.findById(job.getId()).orElse(job);
+            return new ImportCsvJobAcceptedResponse(job.getId(), job.getStatus().name());
         }
-        String filename = file.getOriginalFilename();
-        if (filename == null || !filename.toLowerCase(Locale.ROOT).endsWith(".csv")) {
-            throw new BadRequestException("Only .csv files are supported");
+        return new ImportCsvJobAcceptedResponse(job.getId(), CsvImportJobStatus.PENDING.name());
+    }
+
+    public TeacherImportCsvJobResponse getJob(Long jobId) {
+        CsvImportJob job = csvImportJobRepository.findById(jobId)
+            .orElseThrow(() -> new ResourceNotFoundException("Import job not found"));
+        if (job.getType() != CsvImportJobType.TEACHER) {
+            throw new ResourceNotFoundException("Import job not found");
         }
-        if (file.getSize() > MAX_FILE_BYTES) {
-            throw new BadRequestException("CSV file exceeds maximum size of 2 MB");
+        return toResponse(job);
+    }
+
+    public void executeJob(Long jobId) {
+        CsvImportJob job = csvImportJobRepository.findById(jobId)
+            .orElseThrow(() -> new ResourceNotFoundException("Import job not found"));
+
+        if (job.getType() != CsvImportJobType.TEACHER) {
+            throw new IllegalStateException("Job " + jobId + " is not a teacher CSV import");
         }
+
+        if (job.getStatus() == CsvImportJobStatus.COMPLETED || job.getStatus() == CsvImportJobStatus.FAILED) {
+            return;
+        }
+
+        job.setStatus(CsvImportJobStatus.RUNNING);
+        job.setStartedAt(LocalDateTime.now());
+        job.setErrorMessage(null);
+        csvImportJobRepository.save(job);
+
+        SecurityUser actor = customUserDetailsService.loadSecurityUserById(job.getActorUserId());
 
         List<String[]> parsed;
         try {
-            parsed = CsvParser.parse(file.getInputStream());
+            parsed = CsvParser.parse(new ByteArrayInputStream(job.getFileBytes()));
         } catch (IOException ex) {
-            throw new BadRequestException("Failed to read CSV file");
+            markFailed(jobId, "Failed to read CSV file");
+            return;
         }
 
         if (parsed.isEmpty()) {
-            throw new BadRequestException("CSV file is empty");
+            markFailed(jobId, "CSV file is empty");
+            return;
         }
 
-        String[] headerRow = parsed.get(0);
-        List<String> headers = normalizeHeaders(headerRow);
-        validateHeaders(headers);
-
-        if (parsed.size() == 1) {
-            throw new BadRequestException("CSV file has no data rows");
-        }
-
-        int dataRowCount = parsed.size() - 1;
-        if (dataRowCount > MAX_ROWS) {
-            throw new BadRequestException("CSV file exceeds maximum of " + MAX_ROWS + " data rows");
+        List<String> headers = normalizeHeaders(parsed.get(0));
+        try {
+            validateHeaders(headers);
+        } catch (BadRequestException ex) {
+            markFailed(jobId, ex.getMessage());
+            return;
         }
 
         List<TeacherImportCsvRowResult> results = new ArrayList<>();
@@ -95,7 +161,110 @@ public class TeacherCsvImportService {
             }
         }
 
-        return new TeacherImportCsvResponse(dataRowCount, successCount, failureCount, results);
+        job = csvImportJobRepository.findById(jobId)
+            .orElseThrow(() -> new ResourceNotFoundException("Import job not found"));
+        job.setStatus(CsvImportJobStatus.COMPLETED);
+        job.setSuccessCount(successCount);
+        job.setFailureCount(failureCount);
+        job.setTotalRows(results.size());
+        job.setResultsJson(writeResults(results));
+        job.setCompletedAt(LocalDateTime.now());
+        csvImportJobRepository.save(job);
+        log.info(
+            "Teacher CSV import completed: jobId={} success={} failure={}",
+            jobId,
+            successCount,
+            failureCount);
+    }
+
+    @Transactional
+    public void markFailed(Long jobId, String message) {
+        csvImportJobRepository.findById(jobId).ifPresent(job -> {
+            if (job.getStatus() == CsvImportJobStatus.COMPLETED) {
+                return;
+            }
+            job.setStatus(CsvImportJobStatus.FAILED);
+            job.setErrorMessage(message == null ? "Import failed" : message);
+            job.setCompletedAt(LocalDateTime.now());
+            csvImportJobRepository.save(job);
+        });
+    }
+
+    private ValidatedCsv validateAndRead(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new BadRequestException("CSV file is required");
+        }
+        String filename = file.getOriginalFilename();
+        if (filename == null || !filename.toLowerCase(Locale.ROOT).endsWith(".csv")) {
+            throw new BadRequestException("Only .csv files are supported");
+        }
+        if (file.getSize() > MAX_FILE_BYTES) {
+            throw new BadRequestException("CSV file exceeds maximum size of 2 MB");
+        }
+
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (IOException ex) {
+            throw new BadRequestException("Failed to read CSV file");
+        }
+
+        List<String[]> parsed;
+        try {
+            parsed = CsvParser.parse(new ByteArrayInputStream(bytes));
+        } catch (IOException ex) {
+            throw new BadRequestException("Failed to read CSV file");
+        }
+
+        if (parsed.isEmpty()) {
+            throw new BadRequestException("CSV file is empty");
+        }
+
+        List<String> headers = normalizeHeaders(parsed.get(0));
+        validateHeaders(headers);
+
+        if (parsed.size() == 1) {
+            throw new BadRequestException("CSV file has no data rows");
+        }
+
+        int dataRowCount = parsed.size() - 1;
+        if (dataRowCount > MAX_ROWS) {
+            throw new BadRequestException("CSV file exceeds maximum of " + MAX_ROWS + " data rows");
+        }
+
+        return new ValidatedCsv(bytes, dataRowCount);
+    }
+
+    private TeacherImportCsvJobResponse toResponse(CsvImportJob job) {
+        return new TeacherImportCsvJobResponse(
+            job.getId(),
+            job.getStatus().name(),
+            job.getTotalRows(),
+            job.getSuccessCount(),
+            job.getFailureCount(),
+            readResults(job.getResultsJson()),
+            job.getErrorMessage());
+    }
+
+    private String writeResults(List<TeacherImportCsvRowResult> results) {
+        try {
+            return objectMapper.writeValueAsString(results);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Failed to serialize import results", ex);
+        }
+    }
+
+    private List<TeacherImportCsvRowResult> readResults(String json) {
+        if (json == null || json.isBlank()) {
+            return Collections.emptyList();
+        }
+        try {
+            return objectMapper.readValue(json, new TypeReference<>() {
+            });
+        } catch (JsonProcessingException ex) {
+            log.warn("Failed to deserialize teacher import results JSON", ex);
+            return Collections.emptyList();
+        }
     }
 
     private static List<String> normalizeHeaders(String[] headerRow) {
@@ -116,5 +285,8 @@ public class TeacherCsvImportService {
                 throw new BadRequestException("Missing required CSV column: " + required);
             }
         }
+    }
+
+    private record ValidatedCsv(byte[] bytes, int dataRowCount) {
     }
 }

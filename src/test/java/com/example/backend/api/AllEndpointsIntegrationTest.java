@@ -186,7 +186,7 @@ class AllEndpointsIntegrationTest {
         MvcResult classResult = mockMvc.perform(post("/api/classes")
                 .header(HttpHeaders.AUTHORIZATION, auth)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"name\":\"Class-" + suffix + "\"}"))
+                .content("{\"name\":\"Class-" + suffix + "\",\"classGroup\":\"PRIMARY\"}"))
             .andExpect(status().isCreated())
             .andReturn();
         long classId = readLong(classResult, "$.id");

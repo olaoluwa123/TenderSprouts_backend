@@ -5,7 +5,8 @@ import com.example.backend.dto.parent.ParentResponse;
 import com.example.backend.dto.student.CreateEnrollmentRequest;
 import com.example.backend.dto.student.CreateStudentRequest;
 import com.example.backend.dto.student.EnrollmentResponse;
-import com.example.backend.dto.student.ImportCsvResponse;
+import com.example.backend.dto.student.ImportCsvJobAcceptedResponse;
+import com.example.backend.dto.student.ImportCsvJobResponse;
 import com.example.backend.dto.student.OnboardStudentWithParentRequest;
 import com.example.backend.dto.student.OnboardStudentWithParentResponse;
 import com.example.backend.dto.student.StudentProfileResponse;
@@ -72,7 +73,7 @@ public class StudentController {
         @RequestParam(required = false) Long sessionId,
         @RequestParam(required = false) String search,
         Pageable pageable) {
-        return studentService.list(classId, sessionId, search, pageable);
+        return studentService.list(classId, sessionId, search, pageable, SecurityUtils.requireCurrentUser());
     }
 
     @GetMapping("/{id}")
@@ -104,8 +105,15 @@ public class StudentController {
 
     @PostMapping(value = "/import-csv", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
-    public ImportCsvResponse importCsv(@RequestParam("file") MultipartFile file) {
-        return studentCsvImportService.importFile(file, SecurityUtils.requireCurrentUser());
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public ImportCsvJobAcceptedResponse importCsv(@RequestParam("file") MultipartFile file) {
+        return studentCsvImportService.enqueueImport(file, SecurityUtils.requireCurrentUser());
+    }
+
+    @GetMapping("/import-csv/jobs/{jobId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ImportCsvJobResponse getImportCsvJob(@PathVariable Long jobId) {
+        return studentCsvImportService.getJob(jobId);
     }
 
     @PatchMapping("/{id}")

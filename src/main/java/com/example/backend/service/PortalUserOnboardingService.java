@@ -47,6 +47,16 @@ public class PortalUserOnboardingService {
         emailService.sendWelcomeCredentials(user.getEmail(), displayName, roleLabel, plainPassword, loginUrl);
     }
 
+    /** Welcome credentials for any role (parents and staff) via email. */
+    public void sendWelcomeCredentials(
+        User user,
+        String displayName,
+        String roleLabel,
+        String plainPassword,
+        String phone) {
+        sendWelcomeCredentialsEmail(user, displayName, roleLabel, plainPassword);
+    }
+
     public record OnboardedUser(User user, String plainPassword) {
     }
 }

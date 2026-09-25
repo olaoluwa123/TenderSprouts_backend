@@ -90,6 +90,12 @@ public class TermResultController {
         return termResultService.publish(request, SecurityUtils.requireCurrentUser());
     }
 
+    @PostMapping("/reject")
+    @PreAuthorize("hasRole('ADMIN')")
+    public TermResultSubmissionResponse reject(@Valid @RequestBody PublishTermResultsRequest request) {
+        return termResultService.reject(request, SecurityUtils.requireCurrentUser());
+    }
+
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public TermResultResponse update(

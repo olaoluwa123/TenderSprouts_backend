@@ -69,8 +69,7 @@ public class PasswordResetService {
     }
 
     public void sendResetEmail(User user, String rawToken, String recipientName) {
-        String resetUrl = buildResetUrl(rawToken);
-        emailService.sendPasswordReset(user.getEmail(), recipientName, resetUrl);
+        emailService.sendPasswordReset(user.getEmail(), recipientName, buildResetUrl(rawToken));
     }
 
     @Transactional
@@ -85,8 +84,7 @@ public class PasswordResetService {
     }
 
     public void sendForgotPasswordEmail(User user, String rawToken, String recipientName) {
-        String resetUrl = buildResetUrl(rawToken);
-        emailService.sendForgotPasswordReset(user.getEmail(), recipientName, resetUrl);
+        emailService.sendForgotPasswordReset(user.getEmail(), recipientName, buildResetUrl(rawToken));
     }
 
     private String buildResetUrl(String rawToken) {

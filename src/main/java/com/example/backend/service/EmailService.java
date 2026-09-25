@@ -1,26 +1,18 @@
 package com.example.backend.service;
 
-import com.example.backend.config.AppMailProperties;
-import jakarta.mail.internet.MimeMessage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
-import org.springframework.scheduling.annotation.Async;
+import com.example.backend.email.EmailAttachment;
+import com.example.backend.email.EmailJob;
+import com.example.backend.email.EmailPublisher;
+import java.util.List;
 import org.springframework.stereotype.Service;
 
 @Service
 public class EmailService {
 
-    private static final Logger log = LoggerFactory.getLogger(EmailService.class);
+    private final EmailPublisher emailPublisher;
 
-    private final ObjectProvider<JavaMailSender> mailSenderProvider;
-    private final AppMailProperties mailProperties;
-
-    public EmailService(ObjectProvider<JavaMailSender> mailSenderProvider, AppMailProperties mailProperties) {
-        this.mailSenderProvider = mailSenderProvider;
-        this.mailProperties = mailProperties;
+    public EmailService(EmailPublisher emailPublisher) {
+        this.emailPublisher = emailPublisher;
     }
 
     public void sendWelcomeCredentials(
@@ -62,7 +54,7 @@ public class EmailService {
             Warm regards,
             Tender Sprouts School
             """.formatted(greeting, roleDisplay, toEmail, temporaryPassword, loginUrl);
-        send(toEmail, subject, body.trim());
+        enqueue(toEmail, subject, body.trim());
     }
 
     public void sendPasswordReset(String toEmail, String recipientName, String resetUrl) {
@@ -81,7 +73,7 @@ public class EmailService {
 
             Thank you.
             """.formatted(greeting, resetUrl);
-        send(toEmail, subject, body.trim());
+        enqueue(toEmail, subject, body.trim());
     }
 
     public void sendForgotPasswordReset(String toEmail, String recipientName, String resetUrl) {
@@ -100,29 +92,72 @@ public class EmailService {
 
             Thank you.
             """.formatted(greeting, resetUrl);
-        send(toEmail, subject, body.trim());
+        enqueue(toEmail, subject, body.trim());
+    }
+
+    public void sendFeesPublished(
+        String toEmail,
+        String parentName,
+        String childNames,
+        String className,
+        String termName,
+        String portalUrl) {
+        String greeting = parentName != null && !parentName.isBlank()
+            ? "Dear " + parentName + ","
+            : "Dear parent,";
+        String termLabel = termName != null && !termName.isBlank() ? termName : "this term";
+        String classLabel = className != null && !className.isBlank() ? className : "their class";
+        String children = childNames != null && !childNames.isBlank() ? childNames : "your child";
+        String subject = "School fees published — " + termLabel;
+        String body = """
+            %s
+
+            School fees for %s (%s) have been published and are now available on the parent portal.
+
+            This notice covers: %s.
+
+            Please sign in to view the fee breakdown, outstanding balance, and payment options:
+            %s
+
+            If you have questions about any charge, contact the school office.
+
+            Warm regards,
+            Tender Sprouts School
+            """.formatted(greeting, termLabel, classLabel, children, portalUrl);
+        enqueue(toEmail, subject, body.trim());
     }
 
     public void sendTermResultsPublished(
         String toEmail,
         String parentName,
         String childNames,
-        String portalUrl) {
+        String termName,
+        String portalUrl,
+        List<EmailAttachment> attachments) {
         String greeting = parentName != null && !parentName.isBlank()
             ? "Dear " + parentName + ","
             : "Dear parent,";
-        String subject = "Term results approved";
+        String termLabel = termName != null && !termName.isBlank() ? termName : "this term";
+        String children = childNames != null && !childNames.isBlank() ? childNames : "your child";
+        String subject = "Term results ready — " + termLabel;
+        String attachmentNote = attachments != null && !attachments.isEmpty()
+            ? """
+
+            We have attached the report card PDF(s) for your convenience. You can also download them any time from the portal.
+            """
+            : "\n";
         String body = """
             %s
 
-            Term results have been approved and are now available for: %s.
-
-            Sign in to view results and download report cards:
+            Term results for %s have been approved and are now available for: %s.
+            %s
+            Sign in to the parent portal to view results and download report cards:
             %s
 
-            Thank you.
-            """.formatted(greeting, childNames, portalUrl);
-        send(toEmail, subject, body.trim());
+            Warm regards,
+            Tender Sprouts School
+            """.formatted(greeting, termLabel, children, attachmentNote, portalUrl);
+        enqueue(toEmail, subject, body.trim(), attachments);
     }
 
     public void sendExamTimetablePublished(
@@ -144,31 +179,14 @@ public class EmailService {
 
             Thank you.
             """.formatted(greeting, className, portalUrl);
-        send(toEmail, subject, body.trim());
+        enqueue(toEmail, subject, body.trim());
     }
 
-    @Async
-    public void send(String to, String subject, String body) {
-        if (!mailProperties.isEnabled()) {
-            log.info("Email skipped (mail disabled): to={} subject={}\n{}", to, subject, body);
-            return;
-        }
-        JavaMailSender mailSender = mailSenderProvider.getIfAvailable();
-        if (mailSender == null) {
-            log.warn("Mail enabled but JavaMailSender not configured; logging email to={} subject={}", to, subject);
-            log.info("{}", body);
-            return;
-        }
-        try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
-            helper.setFrom(mailProperties.getFrom());
-            helper.setTo(to);
-            helper.setSubject(subject);
-            helper.setText(body, false);
-            mailSender.send(message);
-        } catch (Exception ex) {
-            log.error("Failed to send email to {}", to, ex);
-        }
+    private void enqueue(String to, String subject, String body) {
+        enqueue(to, subject, body, List.of());
+    }
+
+    private void enqueue(String to, String subject, String body, List<EmailAttachment> attachments) {
+        emailPublisher.publish(EmailJob.initial(to, subject, body, attachments));
     }
 }

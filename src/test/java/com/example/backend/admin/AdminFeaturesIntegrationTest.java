@@ -240,63 +240,80 @@ class AdminFeaturesIntegrationTest {
     }
 
     @Test
-    void teacherCanOnlyBeAssignedToOneClassAndCanBeReassigned() throws Exception {
-        MvcResult onboardResult = mockMvc.perform(post("/api/teachers/onboard")
+    void teachersAndClassesCanHaveManyActiveAssignments() throws Exception {
+        MvcResult teacherAResult = mockMvc.perform(post("/api/teachers/onboard")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
-                      "email":"assign-teacher@school.local",
-                      "fullName":"Assign Teacher",
+                      "email":"assign-teacher-a@school.local",
+                      "fullName":"Assign Teacher A",
                       "phone":"555-0300"
                     }
                     """))
             .andExpect(status().isCreated())
             .andReturn();
-        long teacherId = ((Number) JsonPath.read(
-            onboardResult.getResponse().getContentAsString(), "$.id")).longValue();
+        long teacherAId = ((Number) JsonPath.read(
+            teacherAResult.getResponse().getContentAsString(), "$.id")).longValue();
 
-        mockMvc.perform(post("/api/teachers/" + teacherId + "/classes")
+        MvcResult teacherBResult = mockMvc.perform(post("/api/teachers/onboard")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "email":"assign-teacher-b@school.local",
+                      "fullName":"Assign Teacher B",
+                      "phone":"555-0301"
+                    }
+                    """))
+            .andExpect(status().isCreated())
+            .andReturn();
+        long teacherBId = ((Number) JsonPath.read(
+            teacherBResult.getResponse().getContentAsString(), "$.id")).longValue();
+
+        mockMvc.perform(post("/api/teachers/" + teacherAId + "/classes")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
                 .param("classId", String.valueOf(classAId)))
             .andExpect(status().isCreated())
             .andExpect(jsonPath("$.classId").value(classAId));
 
-        mockMvc.perform(get("/api/teachers/" + teacherId + "/classes")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.length()").value(1))
-            .andExpect(jsonPath("$[0].classId").value(classAId));
-
-        mockMvc.perform(post("/api/teachers/" + teacherId + "/classes")
+        mockMvc.perform(post("/api/teachers/" + teacherAId + "/classes")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
                 .param("classId", String.valueOf(classBId)))
-            .andExpect(status().isConflict());
-
-        mockMvc.perform(post("/api/teachers/" + teacherId + "/classes/reassign")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
-                .param("classId", String.valueOf(classBId)))
-            .andExpect(status().isOk())
+            .andExpect(status().isCreated())
             .andExpect(jsonPath("$.classId").value(classBId));
 
-        mockMvc.perform(get("/api/teachers/" + teacherId + "/classes")
+        mockMvc.perform(get("/api/teachers/" + teacherAId + "/classes")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.length()").value(2));
+
+        mockMvc.perform(post("/api/teachers/" + teacherBId + "/classes")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                .param("classId", String.valueOf(classAId)))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.classId").value(classAId));
+
+        mockMvc.perform(get("/api/classes/" + classAId)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.teachers.length()").value(2));
+
+        mockMvc.perform(post("/api/teachers/" + teacherAId + "/classes")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                .param("classId", String.valueOf(classAId)))
+            .andExpect(status().isConflict());
+
+        mockMvc.perform(post("/api/teachers/" + teacherAId + "/classes/unassign")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                .param("classId", String.valueOf(classAId)))
+            .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/teachers/" + teacherAId + "/classes")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.length()").value(1))
             .andExpect(jsonPath("$[0].classId").value(classBId));
-
-        mockMvc.perform(post("/api/teachers/" + teacherId + "/classes/unassign")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
-            .andExpect(status().isNoContent());
-
-        mockMvc.perform(get("/api/teachers/" + teacherId + "/classes")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.length()").value(0));
-
-        org.junit.jupiter.api.Assertions.assertEquals(
-            0,
-            teacherClassRepository.findByTeacherIdAndIsActiveTrue(teacherId).size());
     }
 
     @Test

@@ -1,14 +1,12 @@
 services:
   mysql:
-    image: mysql:8.0
+    image: mysql:8.0.36
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: school_portal
       MYSQL_USER: ${DB_USERNAME:-school}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-schoolpass}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-schoolroot}
-    ports:
-      - "3306:3306"
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -18,27 +16,59 @@ services:
       retries: 20
       start_period: 20s
 
+  rabbitmq:
+    image: rabbitmq:3-management
+    profiles: ["messaging"]
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-school}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE:-tender-sprouts-erlang-cookie-2026}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
   backend:
     build: .
     restart: unless-stopped
     depends_on:
       mysql:
         condition: service_healthy
-    ports:
-      - "8080:8080"
     env_file:
       - path: .env
         required: false
     environment:
       SPRING_PROFILES_ACTIVE: prod
-      REQUIRE_HTTPS: ${REQUIRE_HTTPS:-false}
+      SPRING_FLYWAY_ENABLED: ${SPRING_FLYWAY_ENABLED:-true}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: ${SPRING_JPA_HIBERNATE_DDL_AUTO:-validate}
+      REQUIRE_HTTPS: ${REQUIRE_HTTPS:-true}
       MYSQL_USE_SSL: "false"
       DB_URL: jdbc:mysql://mysql:3306/school_portal?characterEncoding=UTF-8&useUnicode=true&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
       DB_USERNAME: ${DB_USERNAME:-school}
-      DB_PASSWORD: ${DB_PASSWORD:-schoolpass}
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
-      JWT_SECRET: ${JWT_SECRET:-docker-local-change-me-use-32-chars-min}
-      SEED_ENABLED: ${SEED_ENABLED:-true}
+      DB_PASSWORD: ${DB_PASSWORD}
+      SPRING_AUTOCONFIGURE_EXCLUDE: ${SPRING_AUTOCONFIGURE_EXCLUDE:-org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-school}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://68.169.55.92.sslip.io}
+      JWT_SECRET: ${JWT_SECRET}
+      SEED_ENABLED: ${SEED_ENABLED:-false}
+      PAYSTACK_ENABLED: ${PAYSTACK_ENABLED:-false}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
+      PAYSTACK_PUBLIC_KEY: ${PAYSTACK_PUBLIC_KEY:-}
+      MAIL_ENABLED: ${MAIL_ENABLED:-false}
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH:-true}
+      MAIL_STARTTLS: ${MAIL_STARTTLS:-true}
+      MAIL_SSL: ${MAIL_SSL:-false}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health | grep -q UP"]
       interval: 15s
@@ -46,5 +76,39 @@ services:
       retries: 12
       start_period: 90s
 
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    expose:
+      - "80"
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SITE_HOST: ${SITE_HOST:-68.169.55.92}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@tendersprouts.com.ng}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
 volumes:
   mysql_data:
+  caddy_data:
+  caddy_config:

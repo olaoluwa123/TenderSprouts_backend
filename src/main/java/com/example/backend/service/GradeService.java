@@ -15,6 +15,7 @@ import com.example.backend.entity.Student;
 import com.example.backend.entity.Subject;
 import com.example.backend.entity.Term;
 import com.example.backend.entity.User;
+import com.example.backend.entity.enums.ClassGroup;
 import com.example.backend.exception.ConflictException;
 import com.example.backend.exception.ForbiddenException;
 import com.example.backend.exception.ResourceNotFoundException;
@@ -54,6 +55,7 @@ public class GradeService {
     private final AuthorizationService authorizationService;
     private final AssessmentTypeService assessmentTypeService;
     private final TermResultRepository termResultRepository;
+    private final AuditService auditService;
 
     public GradeService(
         GradeRepository gradeRepository,
@@ -67,7 +69,8 @@ public class GradeService {
         ActiveTermService activeTermService,
         AuthorizationService authorizationService,
         AssessmentTypeService assessmentTypeService,
-        TermResultRepository termResultRepository) {
+        TermResultRepository termResultRepository,
+        AuditService auditService) {
         this.gradeRepository = gradeRepository;
         this.studentRepository = studentRepository;
         this.termRepository = termRepository;
@@ -80,6 +83,7 @@ public class GradeService {
         this.authorizationService = authorizationService;
         this.assessmentTypeService = assessmentTypeService;
         this.termResultRepository = termResultRepository;
+        this.auditService = auditService;
     }
 
     @Transactional
@@ -102,6 +106,7 @@ public class GradeService {
         requireTermInActiveSession(request.termId());
         activeTermService.requireMatchesActiveTermForWrite(request.termId(), actor);
         authorizationService.requireTeacherForClass(actor, request.classId());
+        requirePrimaryClassForTeacher(actor, request.classId());
         AssessmentTypeLookup assessmentType = assessmentTypeService.requireActiveType(request.assessmentType());
         String typeCode = assessmentType.getCode();
         if (gradeRepository.findByStudentIdAndSubjectIdAndTermIdAndAssessmentType(
@@ -139,6 +144,7 @@ public class GradeService {
         }
         if (actor.getRole() == User.Role.TEACHER) {
             authorizationService.requireTeacherForClass(actor, classId);
+            requirePrimaryClassForTeacher(actor, classId);
         } else if (actor.getRole() != User.Role.ADMIN) {
             throw new ForbiddenException("Not allowed to view grading sheet");
         }
@@ -226,6 +232,7 @@ public class GradeService {
         requireTermInActiveSession(request.termId());
         activeTermService.requireMatchesActiveTermForWrite(request.termId(), actor);
         authorizationService.requireTeacherForClass(actor, request.classId());
+        requirePrimaryClassForTeacher(actor, request.classId());
 
         Long teacherId = resolveTeacherId(actor);
         Long sessionId = activeSessionService.requireActiveSessionId();
@@ -260,6 +267,10 @@ public class GradeService {
             gradeRepository.save(grade);
         }
 
+        Student student = studentRepository.findById(studentId).orElse(null);
+        String pupilName = student != null ? formatStudentName(student) : null;
+        auditService.logAdminAction(actor, "UPDATE", "grades", studentId, pupilName);
+
         return getGradingSheet(studentId, request.termId(), actor);
     }
 
@@ -270,6 +281,11 @@ public class GradeService {
         if (actor.getRole() == User.Role.PARENT) {
             authorizationService.requireParentAccessToStudent(actor, studentId);
             return listPublishedGradesForParent(studentId, termId);
+        }
+        if (actor.getRole() == User.Role.TEACHER) {
+            authorizationService.requireTeacherAccessToStudent(actor, studentId);
+        } else if (actor.getRole() != User.Role.ADMIN) {
+            throw new ForbiddenException("Not allowed to view grades");
         }
         List<Grade> grades = termId != null
             ? gradeRepository.findByStudentIdAndTermId(studentId, termId)
@@ -300,9 +316,16 @@ public class GradeService {
 
     public List<GradeResponse> listForClass(Long classId, Long termId, Long subjectId, SecurityUser actor) {
         authorizationService.requireTeacherForClass(actor, classId);
+        requirePrimaryClassForTeacher(actor, classId);
         return gradeRepository.findByClassIdAndTermIdAndSubjectId(classId, termId, subjectId).stream()
             .map(GradeResponse::from)
             .toList();
+    }
+
+    private void requirePrimaryClassForTeacher(SecurityUser actor, Long classId) {
+        if (actor.getRole() == User.Role.TEACHER) {
+            authorizationService.requireClassGroup(classId, ClassGroup.PRIMARY);
+        }
     }
 
     private void requireTermInActiveSession(Long termId) {

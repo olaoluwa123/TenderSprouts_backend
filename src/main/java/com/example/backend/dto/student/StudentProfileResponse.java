@@ -3,6 +3,7 @@ package com.example.backend.dto.student;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 public record StudentProfileResponse(
     Long id,
@@ -10,6 +11,9 @@ public record StudentProfileResponse(
     String lastName,
     LocalDate dateOfBirth,
     String gender,
+    @JsonProperty("ageYears") Integer ageYears,
+    @JsonProperty("height") String height,
+    @JsonProperty("weight") String weight,
     String admissionNumber,
     Long classId,
     String className,

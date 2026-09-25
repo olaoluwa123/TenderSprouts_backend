@@ -44,6 +44,9 @@ public class Payment extends AuditableEntity {
     @Column(name = "gateway_reference", length = 255)
     private String gatewayReference;
 
+    @Column(name = "gateway_access_code", length = 255)
+    private String gatewayAccessCode;
+
     @Column(name = "paid_at")
     private LocalDateTime paidAt;
 
@@ -96,6 +99,14 @@ public class Payment extends AuditableEntity {
 
     public void setGatewayReference(String gatewayReference) {
         this.gatewayReference = gatewayReference;
+    }
+
+    public String getGatewayAccessCode() {
+        return gatewayAccessCode;
+    }
+
+    public void setGatewayAccessCode(String gatewayAccessCode) {
+        this.gatewayAccessCode = gatewayAccessCode;
     }
 
     public LocalDateTime getPaidAt() {

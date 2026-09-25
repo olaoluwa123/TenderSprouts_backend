@@ -13,3 +13,7 @@
 /mcps/
 /terminals/
 *.class
+/scripts/node_modules/
+/tender.sql
+/tmp_h2.sql
+/src/main/java/com/example/backend/debug/

@@ -6,6 +6,7 @@ public record PublishFeesResponse(
     Long classId,
     Long termId,
     int structuresPublished,
-    int invoicesCreated
+    int invoicesCreated,
+    int parentsNotified
 ) {
 }

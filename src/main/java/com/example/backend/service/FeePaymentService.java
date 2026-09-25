@@ -21,9 +21,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -57,47 +61,49 @@ public class FeePaymentService {
     }
 
     @Transactional
-    public InitializePaymentResponse initializeForParent(SecurityUser actor) {
+    public InitializePaymentResponse initializeForParent(
+        SecurityUser actor,
+        Long sessionId,
+        Long termId) {
         if (!paystackProperties.isConfigured()) {
             throw new BadRequestException(
                 "Online payments are not enabled yet. Ask the school to configure Paystack.");
         }
-        List<Invoice> invoices = feeService.pendingPayableInvoicesForParent(actor);
+        List<Invoice> invoices = feeService.pendingPayableInvoicesForParent(actor, sessionId, termId);
         if (invoices.isEmpty()) {
             throw new BadRequestException("No outstanding fees to pay");
         }
 
-        List<Long> invoiceIds = invoices.stream().map(Invoice::getId).toList();
+        List<Long> invoiceIds = invoices.stream().map(Invoice::getId).sorted().toList();
+        invoiceRepository.findAllByIdForUpdate(invoiceIds);
+
         BigDecimal total = invoices.stream()
             .map(Invoice::getAmount)
             .reduce(BigDecimal.ZERO, BigDecimal::add);
-        String reference = "TSP-P" + actor.getProfileId() + "-"
-            + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
 
-        Payment payment = new Payment();
-        payment.setInvoiceIds(invoiceIds);
-        payment.setInvoiceId(invoiceIds.get(0));
-        payment.setAmount(total);
-        payment.setStatus(PaymentStatus.PENDING);
-        payment.setGatewayReference(reference);
+        Payment payment = findReusablePendingPayment(invoiceIds, total);
+        boolean reused = payment != null;
+        if (payment == null) {
+            payment = new Payment();
+            payment.setInvoiceIds(invoiceIds);
+            payment.setInvoiceId(invoiceIds.get(0));
+            payment.setAmount(total);
+            payment.setStatus(PaymentStatus.PENDING);
+            payment.setGatewayReference(newGatewayReference(actor));
+            payment = paymentRepository.save(payment);
+        }
+
+        String accessCode = reused
+            ? ensureAccessCode(payment, actor, invoiceIds, total)
+            : initializeAccessCode(payment, actor, invoiceIds, total);
+        payment.setGatewayAccessCode(accessCode);
         paymentRepository.save(payment);
 
-        long amountKobo = toKobo(total);
-        String paystackEmail = paystackCustomerEmail(actor);
-        JsonNode data = paystackClient.initializeTransaction(
-            paystackEmail,
-            amountKobo,
-            reference,
-            Map.of(
-                "invoiceIds", invoiceIds,
-                "parentId", actor.getProfileId(),
-                "accountEmail", actor.getUsername() == null ? "" : actor.getUsername()
-            ));
-        String accessCode = text(data, "access_code");
-        if (accessCode == null || accessCode.isBlank()) {
-            throw new BadRequestException("Paystack did not return an access code");
-        }
-        return new InitializePaymentResponse(accessCode, reference, total, invoiceIds);
+        return new InitializePaymentResponse(
+            accessCode,
+            payment.getGatewayReference(),
+            payment.getAmount(),
+            invoiceIds);
     }
 
     @Transactional
@@ -138,15 +144,13 @@ public class FeePaymentService {
         JsonNode data = root.path("data");
         String reference = text(data, "reference");
         if (reference == null || reference.isBlank()) {
-            return;
+            throw new ResourceNotFoundException("Payment not found");
         }
-        Payment payment = paymentRepository.findByGatewayReference(reference).orElse(null);
-        if (payment == null) {
-            return;
-        }
+        Payment payment = paymentRepository.findByGatewayReference(reference)
+            .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
         List<Long> invoiceIds = paymentInvoiceIds(payment);
         if (invoiceIds.isEmpty()) {
-            return;
+            throw new ResourceNotFoundException("Payment not found");
         }
         List<Invoice> invoices = invoiceRepository.findAllById(invoiceIds);
         if (payment.getStatus() == PaymentStatus.SUCCESS && allInvoicesPaid(invoices)) {
@@ -189,6 +193,116 @@ public class FeePaymentService {
         feeService.markInvoicesPaidFromGateway(
             invoices.stream().map(Invoice::getId).toList(),
             reference);
+    }
+
+    private Payment findReusablePendingPayment(List<Long> invoiceIds, BigDecimal total) {
+        Set<Long> seen = new HashSet<>();
+        for (Long invoiceId : invoiceIds) {
+            for (Payment payment : paymentRepository.findByInvoiceIdAndStatus(invoiceId, PaymentStatus.PENDING)) {
+                if (payment.getId() != null && !seen.add(payment.getId())) {
+                    continue;
+                }
+                if (matchesInvoiceSetAndAmount(payment, invoiceIds, total)) {
+                    return payment;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean matchesInvoiceSetAndAmount(Payment payment, List<Long> invoiceIds, BigDecimal total) {
+        List<Long> existing = new ArrayList<>(paymentInvoiceIds(payment));
+        Collections.sort(existing);
+        if (!existing.equals(invoiceIds)) {
+            return false;
+        }
+        return payment.getAmount() != null && payment.getAmount().compareTo(total) == 0;
+    }
+
+    private String ensureAccessCode(
+        Payment payment,
+        SecurityUser actor,
+        List<Long> invoiceIds,
+        BigDecimal total) {
+        String stored = payment.getGatewayAccessCode();
+        if (stored != null && !stored.isBlank()) {
+            return stored;
+        }
+        String recovered = recoverAccessCode(payment.getGatewayReference());
+        if (recovered != null && !recovered.isBlank()) {
+            return recovered;
+        }
+        return initializeAccessCode(payment, actor, invoiceIds, total);
+    }
+
+    private String recoverAccessCode(String reference) {
+        if (reference == null || reference.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode root = paystackClient.verifyTransaction(reference);
+            JsonNode data = root.has("data") ? root.path("data") : root;
+            return text(data, "access_code");
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private String initializeAccessCode(
+        Payment payment,
+        SecurityUser actor,
+        List<Long> invoiceIds,
+        BigDecimal total) {
+        String reference = payment.getGatewayReference();
+        if (reference == null || reference.isBlank()) {
+            reference = newGatewayReference(actor);
+            payment.setGatewayReference(reference);
+        }
+        Map<String, Object> metadata = Map.of(
+            "invoiceIds", invoiceIds,
+            "parentId", actor.getProfileId(),
+            "accountEmail", actor.getUsername() == null ? "" : actor.getUsername()
+        );
+        try {
+            return accessCodeFromInitialize(actor, total, reference, metadata);
+        } catch (BadRequestException ex) {
+            if (!isDuplicateReference(ex.getMessage())) {
+                throw ex;
+            }
+            reference = newGatewayReference(actor);
+            payment.setGatewayReference(reference);
+            return accessCodeFromInitialize(actor, total, reference, metadata);
+        }
+    }
+
+    private String accessCodeFromInitialize(
+        SecurityUser actor,
+        BigDecimal total,
+        String reference,
+        Map<String, Object> metadata) {
+        JsonNode data = paystackClient.initializeTransaction(
+            paystackCustomerEmail(actor),
+            toKobo(total),
+            reference,
+            metadata);
+        String accessCode = text(data, "access_code");
+        if (accessCode == null || accessCode.isBlank()) {
+            throw new BadRequestException("Paystack did not return an access code");
+        }
+        return accessCode;
+    }
+
+    private static String newGatewayReference(SecurityUser actor) {
+        return "TSP-P" + actor.getProfileId() + "-"
+            + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+    }
+
+    private static boolean isDuplicateReference(String message) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        String lower = message.toLowerCase(Locale.ROOT);
+        return lower.contains("duplicate") && lower.contains("reference");
     }
 
     private List<Long> paymentInvoiceIds(Payment payment) {

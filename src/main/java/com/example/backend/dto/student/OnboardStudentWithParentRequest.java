@@ -13,6 +13,8 @@ public record OnboardStudentWithParentRequest(
     @NotBlank String admissionNumber,
     Gender gender,
     @NotNull Long classId,
+    String height,
+    String weight,
     @NotBlank @Email String parentEmail,
     @NotBlank String parentFullName,
     String parentPhone

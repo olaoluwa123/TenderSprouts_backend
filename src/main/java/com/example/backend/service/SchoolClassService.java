@@ -15,6 +15,7 @@ import com.example.backend.dto.classroom.ClassProfileResponse.TeacherInfo;
 import com.example.backend.dto.classroom.ClassSubjectResponse;
 import com.example.backend.dto.classroom.CreateSchoolClassRequest;
 import com.example.backend.dto.classroom.SchoolClassResponse;
+import com.example.backend.dto.classroom.UpdateSchoolClassRequest;
 import com.example.backend.entity.Attendance;
 import com.example.backend.entity.ClassSubject;
 import com.example.backend.entity.SchoolClass;
@@ -25,6 +26,7 @@ import com.example.backend.entity.TeacherClass;
 import com.example.backend.entity.Term;
 import com.example.backend.entity.TermResult;
 import com.example.backend.entity.enums.AttendanceStatus;
+import com.example.backend.entity.enums.ClassGroup;
 import com.example.backend.exception.ConflictException;
 import com.example.backend.exception.ResourceNotFoundException;
 import com.example.backend.repository.AttendanceRepository;
@@ -63,6 +65,7 @@ public class SchoolClassService {
     private final TermResultRepository termResultRepository;
     private final ActiveTermService activeTermService;
     private final AuditService auditService;
+    private final AuthorizationService authorizationService;
 
     public SchoolClassService(
         SchoolClassRepository schoolClassRepository,
@@ -75,7 +78,8 @@ public class SchoolClassService {
         AttendanceRepository attendanceRepository,
         TermResultRepository termResultRepository,
         ActiveTermService activeTermService,
-        AuditService auditService) {
+        AuditService auditService,
+        AuthorizationService authorizationService) {
         this.schoolClassRepository = schoolClassRepository;
         this.classSubjectRepository = classSubjectRepository;
         this.subjectRepository = subjectRepository;
@@ -87,21 +91,39 @@ public class SchoolClassService {
         this.termResultRepository = termResultRepository;
         this.activeTermService = activeTermService;
         this.auditService = auditService;
+        this.authorizationService = authorizationService;
     }
 
-    public Page<ClassListItemResponse> list(Pageable pageable) {
+    public Page<ClassListItemResponse> list(ClassGroup group, Pageable pageable, SecurityUser actor) {
         Map<Long, String> subjectNames = subjectNameMap();
-        return schoolClassRepository.findAll(pageable).map(schoolClass -> toListItem(schoolClass, subjectNames));
+        Page<SchoolClass> page;
+        if (actor != null && actor.getRole() == com.example.backend.entity.User.Role.TEACHER) {
+            java.util.Set<Long> assigned = authorizationService.getAssignedClassIds(actor);
+            if (assigned.isEmpty()) {
+                page = Page.empty(pageable);
+            } else if (group == null) {
+                page = schoolClassRepository.findByIdIn(assigned, pageable);
+            } else {
+                page = schoolClassRepository.findByIdInAndClassGroup(assigned, group, pageable);
+            }
+        } else {
+            page = group == null
+                ? schoolClassRepository.findAll(pageable)
+                : schoolClassRepository.findByClassGroup(group, pageable);
+        }
+        return page.map(schoolClass -> toListItem(schoolClass, subjectNames));
     }
 
-    public ClassProfileResponse getProfile(Long classId, LocalDate attendanceDate) {
+    public ClassProfileResponse getProfile(Long classId, LocalDate attendanceDate, SecurityUser actor) {
         SchoolClass schoolClass = findClass(classId);
+        authorizationService.requireTeacherForClass(actor, classId);
         LocalDate date = attendanceDate != null ? attendanceDate : LocalDate.now();
         Map<Long, String> subjectNames = subjectNameMap();
         Map<Long, String> teacherNames = teacherRepository.findAll().stream()
             .collect(Collectors.toMap(Teacher::getId, Teacher::getFullName, (a, b) -> a));
 
-        TeacherInfo teacher = resolveTeacher(classId);
+        List<TeacherInfo> classTeachers = resolveTeachers(classId);
+        TeacherInfo teacher = classTeachers.isEmpty() ? null : classTeachers.get(0);
         List<Student> students = studentRepository.findByClassId(classId);
 
         List<SubjectInfo> subjects = classSubjectRepository.findByClassIdAndIsActiveTrue(classId).stream()
@@ -133,8 +155,10 @@ public class SchoolClassService {
         return new ClassProfileResponse(
             schoolClass.getId(),
             schoolClass.getName(),
+            schoolClass.getClassGroup(),
             schoolClass.getIsActive(),
             teacher,
+            classTeachers,
             students.size(),
             subjects,
             pupils,
@@ -145,14 +169,32 @@ public class SchoolClassService {
     @Transactional
     public SchoolClassResponse create(CreateSchoolClassRequest request, SecurityUser actor) {
         SchoolClass schoolClass = new SchoolClass();
-        schoolClass.setName(request.name());
+        schoolClass.setName(request.name().trim());
+        schoolClass.setClassGroup(request.classGroup());
         SchoolClass saved = schoolClassRepository.save(schoolClass);
         auditService.logAdminAction(actor, "CREATE", "class", saved.getId(), saved.getName());
         return SchoolClassResponse.from(saved);
     }
 
-    public List<ClassSubjectResponse> listSubjects(Long classId) {
+    @Transactional
+    public SchoolClassResponse update(Long classId, UpdateSchoolClassRequest request, SecurityUser actor) {
+        SchoolClass schoolClass = findClass(classId);
+        schoolClass.setName(request.name().trim());
+        schoolClass.setClassGroup(request.classGroup());
+        schoolClass.setIsActive(request.isActive());
+        SchoolClass saved = schoolClassRepository.save(schoolClass);
+        auditService.logAdminAction(
+            actor,
+            "UPDATE",
+            "class",
+            saved.getId(),
+            saved.getName() + "," + saved.getClassGroup());
+        return SchoolClassResponse.from(saved);
+    }
+
+    public List<ClassSubjectResponse> listSubjects(Long classId, SecurityUser actor) {
         requireClass(classId);
+        authorizationService.requireTeacherForClass(actor, classId);
         Map<Long, String> subjectNames = subjectNameMap();
         return classSubjectRepository.findByClassIdAndIsActiveTrue(classId).stream()
             .map(cs -> ClassSubjectResponse.from(
@@ -250,27 +292,37 @@ public class SchoolClassService {
     }
 
     private ClassListItemResponse toListItem(SchoolClass schoolClass, Map<Long, String> subjectNames) {
-        TeacherInfo teacher = resolveTeacher(schoolClass.getId());
+        List<TeacherInfo> teachers = resolveTeachers(schoolClass.getId());
+        TeacherInfo teacher = teachers.isEmpty() ? null : teachers.get(0);
+        String teacherName = teachers.stream()
+            .map(TeacherInfo::fullName)
+            .filter(name -> name != null && !name.isBlank())
+            .reduce((a, b) -> a + " / " + b)
+            .orElse(null);
         return new ClassListItemResponse(
             schoolClass.getId(),
             schoolClass.getName(),
+            schoolClass.getClassGroup(),
             schoolClass.getIsActive(),
             teacher != null ? teacher.id() : null,
-            teacher != null ? teacher.fullName() : null,
+            teacherName,
+            teachers.stream()
+                .map(row -> new ClassListItemResponse.TeacherSummary(row.id(), row.fullName()))
+                .toList(),
             studentRepository.countByClassId(schoolClass.getId()),
             classSubjectRepository.countByClassIdAndIsActiveTrue(schoolClass.getId()));
     }
 
-    private TeacherInfo resolveTeacher(Long classId) {
-        List<TeacherClass> assignments = teacherClassRepository.findByClassIdAndIsActiveTrue(classId);
-        if (assignments.isEmpty()) {
-            return null;
-        }
-        Teacher teacher = teacherRepository.findById(assignments.get(0).getTeacherId()).orElse(null);
-        if (teacher == null) {
-            return null;
-        }
-        return new TeacherInfo(teacher.getId(), teacher.getFullName(), teacher.getPhone());
+    private List<TeacherInfo> resolveTeachers(Long classId) {
+        return teacherClassRepository.findByClassIdAndIsActiveTrue(classId).stream()
+            .map(TeacherClass::getTeacherId)
+            .map(teacherRepository::findById)
+            .flatMap(java.util.Optional::stream)
+            .sorted(java.util.Comparator.comparing(
+                teacher -> teacher.getFullName() == null ? "" : teacher.getFullName(),
+                String.CASE_INSENSITIVE_ORDER))
+            .map(teacher -> new TeacherInfo(teacher.getId(), teacher.getFullName(), teacher.getPhone()))
+            .toList();
     }
 
     private AttendanceInfo buildAttendance(Long classId, LocalDate date, List<Student> students) {

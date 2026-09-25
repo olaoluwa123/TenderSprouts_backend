@@ -1,5 +1,6 @@
 package com.example.backend.service;
 
+import com.example.backend.dto.classroom.ClassProfileResponse.TeacherInfo;
 import com.example.backend.dto.classroom.TeacherAssignmentResponse;
 import com.example.backend.entity.SchoolClass;
 import com.example.backend.entity.TeacherClass;
@@ -10,7 +11,9 @@ import com.example.backend.repository.TeacherClassRepository;
 import com.example.backend.repository.TeacherRepository;
 import com.example.backend.security.SecurityUser;
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +36,29 @@ public class TeacherAssignmentService {
         this.auditService = auditService;
     }
 
+    public List<TeacherInfo> activeTeachersForClass(Long classId) {
+        if (classId == null) {
+            return List.of();
+        }
+        return teacherClassRepository.findByClassIdAndIsActiveTrue(classId).stream()
+            .map(TeacherClass::getTeacherId)
+            .map(teacherRepository::findById)
+            .flatMap(Optional::stream)
+            .sorted(Comparator.comparing(
+                teacher -> teacher.getFullName() == null ? "" : teacher.getFullName(),
+                String.CASE_INSENSITIVE_ORDER))
+            .map(teacher -> new TeacherInfo(teacher.getId(), teacher.getFullName(), teacher.getPhone()))
+            .toList();
+    }
+
+    public String joinedTeacherNames(Long classId) {
+        List<String> names = activeTeachersForClass(classId).stream()
+            .map(TeacherInfo::fullName)
+            .filter(name -> name != null && !name.isBlank())
+            .toList();
+        return names.isEmpty() ? null : String.join(" / ", names);
+    }
+
     public List<TeacherAssignmentResponse> listClasses(Long teacherId) {
         requireTeacher(teacherId);
         return activeAssignments(teacherId).stream()
@@ -44,9 +70,8 @@ public class TeacherAssignmentService {
     public TeacherAssignmentResponse assignClass(Long teacherId, Long classId, SecurityUser actor) {
         requireTeacher(teacherId);
         requireClass(classId);
-        if (!activeAssignments(teacherId).isEmpty()) {
-            throw new ConflictException(
-                "Teacher is already assigned to a class. Reassign them to move to another class.");
+        if (teacherClassRepository.existsByTeacherIdAndClassIdAndIsActiveTrue(teacherId, classId)) {
+            throw new ConflictException("Teacher is already assigned to this class");
         }
         TeacherClass saved = activateOrCreateAssignment(teacherId, classId);
         auditService.logAdminAction(actor, "ASSIGN", "teacher_class", saved.getId(), null);
@@ -75,19 +100,24 @@ public class TeacherAssignmentService {
     }
 
     @Transactional
-    public void unassignClass(Long teacherId, SecurityUser actor) {
+    public void unassignClass(Long teacherId, Long classId, SecurityUser actor) {
         requireTeacher(teacherId);
-        List<TeacherClass> currentActives = activeAssignments(teacherId);
-        if (currentActives.isEmpty()) {
-            throw new ResourceNotFoundException("Teacher is not assigned to any class");
+        if (classId == null) {
+            throw new ResourceNotFoundException("Class is required to unassign");
         }
-        Long fromClassId = deactivateAllActive(teacherId);
+        requireClass(classId);
+        TeacherClass assignment = teacherClassRepository.findByTeacherIdAndClassId(teacherId, classId)
+            .filter(row -> Boolean.TRUE.equals(row.getIsActive()))
+            .orElseThrow(() -> new ResourceNotFoundException("Teacher is not assigned to this class"));
+        assignment.setIsActive(false);
+        assignment.setEndDate(LocalDate.now());
+        teacherClassRepository.save(assignment);
         auditService.logAdminAction(
             actor,
             "UNASSIGN",
             "teacher_class",
             teacherId,
-            fromClassId != null ? "fromClassId=" + fromClassId : null);
+            "fromClassId=" + classId);
     }
 
     private List<TeacherClass> activeAssignments(Long teacherId) {

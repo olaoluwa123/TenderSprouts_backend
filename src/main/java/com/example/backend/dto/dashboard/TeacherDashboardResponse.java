@@ -10,6 +10,7 @@ public record TeacherDashboardResponse(
     String termName,
     Long classId,
     String className,
+    List<AssignedClass> classes,
     long studentCount,
     BigDecimal classAverage,
     String submissionStatus,
@@ -19,4 +20,6 @@ public record TeacherDashboardResponse(
     List<StudentPerformanceItem> bottomPerformers,
     List<UpcomingExamItem> upcomingExams
 ) {
+    public record AssignedClass(Long classId, String className) {
+    }
 }

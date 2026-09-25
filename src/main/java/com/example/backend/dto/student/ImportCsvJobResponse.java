@@ -2,10 +2,13 @@ package com.example.backend.dto.student;
 
 import java.util.List;
 
-public record ImportCsvResponse(
+public record ImportCsvJobResponse(
+    Long jobId,
+    String status,
     int totalRows,
     int successCount,
     int failureCount,
-    List<ImportCsvRowResult> rows
+    List<ImportCsvRowResult> rows,
+    String errorMessage
 ) {
 }

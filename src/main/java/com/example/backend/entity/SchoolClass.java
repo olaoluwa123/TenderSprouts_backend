@@ -1,8 +1,11 @@
 package com.example.backend.entity;
 
 import com.example.backend.entity.base.AuditableEntity;
+import com.example.backend.entity.enums.ClassGroup;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -18,6 +21,10 @@ public class SchoolClass extends AuditableEntity {
 
     @Column(name = "name", nullable = false, length = 50)
     private String name;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "class_group", nullable = false, length = 20)
+    private ClassGroup classGroup = ClassGroup.PRIMARY;
 
     @Column(name = "is_active")
     private Boolean isActive = true;
@@ -39,6 +46,14 @@ public class SchoolClass extends AuditableEntity {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public ClassGroup getClassGroup() {
+        return classGroup;
+    }
+
+    public void setClassGroup(ClassGroup classGroup) {
+        this.classGroup = classGroup;
     }
 
     public Boolean getIsActive() {

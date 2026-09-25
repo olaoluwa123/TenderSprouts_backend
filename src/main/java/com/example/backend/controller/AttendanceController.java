@@ -32,7 +32,7 @@ public class AttendanceController {
     @PreAuthorize("hasAnyRole('ADMIN', 'TEACHER')")
     public List<PupilAttendanceResponse> daily(
         @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        return attendanceService.daily(date);
+        return attendanceService.daily(date, SecurityUtils.requireCurrentUser());
     }
 
     @GetMapping("/class")
@@ -40,7 +40,7 @@ public class AttendanceController {
     public List<PupilAttendanceResponse> forClass(
         @RequestParam Long classId,
         @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        return attendanceService.forClass(classId, date);
+        return attendanceService.forClass(classId, date, SecurityUtils.requireCurrentUser());
     }
 
     @GetMapping("/pupil")
@@ -58,7 +58,7 @@ public class AttendanceController {
         @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
         @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
         @RequestParam(required = false) Long classId) {
-        return attendanceService.absences(from, to, classId);
+        return attendanceService.absences(from, to, classId, SecurityUtils.requireCurrentUser());
     }
 
     @PostMapping("/class/mark")

@@ -1,9 +1,13 @@
 package com.example.backend.service;
 
+import com.example.backend.entity.SchoolClass;
 import com.example.backend.entity.TeacherClass;
 import com.example.backend.entity.User;
+import com.example.backend.entity.enums.ClassGroup;
 import com.example.backend.exception.ForbiddenException;
+import com.example.backend.exception.ResourceNotFoundException;
 import com.example.backend.repository.ParentStudentRepository;
+import com.example.backend.repository.SchoolClassRepository;
 import com.example.backend.repository.StudentRepository;
 import com.example.backend.repository.TeacherClassRepository;
 import com.example.backend.security.SecurityUser;
@@ -18,14 +22,17 @@ public class AuthorizationService {
     private final TeacherClassRepository teacherClassRepository;
     private final ParentStudentRepository parentStudentRepository;
     private final StudentRepository studentRepository;
+    private final SchoolClassRepository schoolClassRepository;
 
     public AuthorizationService(
         TeacherClassRepository teacherClassRepository,
         ParentStudentRepository parentStudentRepository,
-        StudentRepository studentRepository) {
+        StudentRepository studentRepository,
+        SchoolClassRepository schoolClassRepository) {
         this.teacherClassRepository = teacherClassRepository;
         this.parentStudentRepository = parentStudentRepository;
         this.studentRepository = studentRepository;
+        this.schoolClassRepository = schoolClassRepository;
     }
 
     public void requireAdmin() {
@@ -34,12 +41,22 @@ public class AuthorizationService {
         }
     }
 
+    public void requireClassGroup(Long classId, ClassGroup expected) {
+        SchoolClass schoolClass = schoolClassRepository.findById(classId)
+            .orElseThrow(() -> new ResourceNotFoundException("Class not found"));
+        if (schoolClass.getClassGroup() != expected) {
+            String label = expected == ClassGroup.PRE_PRIMARY ? "preschool" : "primary";
+            throw new ForbiddenException("This report is only available for " + label + " classes");
+        }
+    }
+
     public void requireTeacherForClass(SecurityUser user, Long classId) {
         if (user.getRole() == User.Role.ADMIN) {
             return;
         }
-        if (user.getRole() != User.Role.TEACHER
-            || !teacherClassRepository.existsByTeacherIdAndClassIdAndIsActiveTrue(user.getProfileId(), classId)) {
+        boolean assigned = user.getRole() == User.Role.TEACHER
+            && teacherClassRepository.existsByTeacherIdAndClassIdAndIsActiveTrue(user.getProfileId(), classId);
+        if (user.getRole() != User.Role.TEACHER || !assigned) {
             throw new ForbiddenException("Not assigned to this class");
         }
     }
@@ -49,6 +66,7 @@ public class AuthorizationService {
             return;
         }
         if (user.getRole() == User.Role.TEACHER) {
+            requireTeacherAccessToStudent(user, studentId);
             return;
         }
         if (user.getRole() != User.Role.PARENT
@@ -58,10 +76,26 @@ public class AuthorizationService {
     }
 
     public void requireParentOrStaffForStudentRead(SecurityUser user, Long studentId) {
-        if (user.getRole() == User.Role.ADMIN || user.getRole() == User.Role.TEACHER) {
+        if (user.getRole() == User.Role.ADMIN) {
+            return;
+        }
+        if (user.getRole() == User.Role.TEACHER) {
+            requireTeacherAccessToStudent(user, studentId);
             return;
         }
         requireParentAccessToStudent(user, studentId);
+    }
+
+    public void requireTeacherAccessToStudent(SecurityUser user, Long studentId) {
+        if (user.getRole() == User.Role.ADMIN) {
+            return;
+        }
+        var student = studentRepository.findById(studentId)
+            .orElseThrow(() -> new ResourceNotFoundException("Student not found"));
+        if (student.getClassId() == null) {
+            throw new ForbiddenException("Not assigned to this class");
+        }
+        requireTeacherForClass(user, student.getClassId());
     }
 
     public Set<Long> getAssignedClassIds(SecurityUser user) {

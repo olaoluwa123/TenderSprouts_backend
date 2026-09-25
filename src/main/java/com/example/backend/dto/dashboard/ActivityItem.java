@@ -9,6 +9,7 @@ public record ActivityItem(
     Long entityId,
     String details,
     String userRole,
+    String userName,
     LocalDateTime createdAt
 ) {
 }

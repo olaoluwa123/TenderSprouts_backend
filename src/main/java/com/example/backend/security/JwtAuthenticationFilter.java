@@ -54,6 +54,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         user, null, user.getAuthorities());
                     auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(auth);
+                    boolean mustChange = Boolean.TRUE.equals(userEntity.getMustChangePassword());
+                    boolean allowedWhileMustChange = isAllowedDuringPasswordChange(request);
+                    if (mustChange && !allowedWhileMustChange) {
+                        response.sendError(HttpServletResponse.SC_FORBIDDEN, "Password change required");
+                        return;
+                    }
                 }
             } catch (Exception ex) {
                 SecurityContextHolder.clearContext();
@@ -62,5 +68,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
         }
         filterChain.doFilter(request, response);
+    }
+
+    private static boolean isAllowedDuringPasswordChange(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        if (path == null) {
+            return false;
+        }
+        int query = path.indexOf('?');
+        if (query >= 0) {
+            path = path.substring(0, query);
+        }
+        return "/api/auth/change-password".equals(path)
+            || "/api/auth/logout".equals(path)
+            || "/api/auth/refresh".equals(path);
     }
 }

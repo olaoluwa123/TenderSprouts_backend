@@ -45,7 +45,7 @@ public class ExamTimetableService {
     private final ActiveSessionService activeSessionService;
     private final ActiveTermService activeTermService;
     private final AuthorizationService authorizationService;
-    private final ParentEmailService parentEmailService;
+    private final ParentNotifyService parentNotifyService;
     private final EmailService emailService;
     private final AppFrontendProperties frontendProperties;
     private final AuditService auditService;
@@ -62,7 +62,7 @@ public class ExamTimetableService {
         ActiveSessionService activeSessionService,
         ActiveTermService activeTermService,
         AuthorizationService authorizationService,
-        ParentEmailService parentEmailService,
+        ParentNotifyService parentNotifyService,
         EmailService emailService,
         AppFrontendProperties frontendProperties,
         AuditService auditService) {
@@ -77,7 +77,7 @@ public class ExamTimetableService {
         this.activeSessionService = activeSessionService;
         this.activeTermService = activeTermService;
         this.authorizationService = authorizationService;
-        this.parentEmailService = parentEmailService;
+        this.parentNotifyService = parentNotifyService;
         this.emailService = emailService;
         this.frontendProperties = frontendProperties;
         this.auditService = auditService;
@@ -217,6 +217,9 @@ public class ExamTimetableService {
             .orElseThrow(() -> new ResourceNotFoundException("Class not found"));
         termRepository.findById(termId)
             .orElseThrow(() -> new ResourceNotFoundException("Term not found"));
+        if (actor.getRole() != User.Role.ADMIN) {
+            authorizationService.requireTeacherForClass(actor, classId);
+        }
         activeTermService.requireMatchesActiveTermForWrite(termId, actor);
 
         List<ExamTimetableSlot> slots = examTimetableSlotRepository
@@ -236,8 +239,8 @@ public class ExamTimetableService {
         }
 
         String className = schoolClassRepository.findById(classId).map(SchoolClass::getName).orElse("class");
-        String portalUrl = frontendProperties.getOrigin().replaceAll("/$", "") + "/exam-timetable";
-        int parentsNotified = parentEmailService.emailParentsForClass(
+        String portalUrl = frontendProperties.getOrigin().replaceAll("/$", "") + "/parent/exam-timetable";
+        int parentsNotified = parentNotifyService.notifyParentsForClass(
             classId,
             (user, parent) -> emailService.sendExamTimetablePublished(
                 user.getEmail(),

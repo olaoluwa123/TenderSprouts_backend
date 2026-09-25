@@ -136,7 +136,8 @@ class FeeRepublishIntegrationTest {
                 .param("termId", String.valueOf(termId)))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.invoicesCreated").value(2))
-            .andExpect(jsonPath("$.structuresPublished").value(1));
+            .andExpect(jsonPath("$.structuresPublished").value(1))
+            .andExpect(jsonPath("$.parentsNotified").value(0));
 
         assertThat(invoiceRepository.findByStudentIdOrderByDueDateAscCreatedAtDesc(pupilOneId)).hasSize(1);
         assertThat(invoiceRepository.findByStudentIdOrderByDueDateAscCreatedAtDesc(pupilTwoId)).hasSize(1);
@@ -169,7 +170,8 @@ class FeeRepublishIntegrationTest {
                 .param("termId", String.valueOf(termId)))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.pupilsInvoiced").value(1))
-            .andExpect(jsonPath("$.invoicesCreated").value(1));
+            .andExpect(jsonPath("$.invoicesCreated").value(1))
+            .andExpect(jsonPath("$.parentsNotified").value(0));
 
         assertThat(invoiceRepository.findByStudentIdOrderByDueDateAscCreatedAtDesc(newPupilId)).hasSize(1);
         assertThat(invoiceRepository.findByStudentIdOrderByDueDateAscCreatedAtDesc(pupilOneId)).hasSize(1);

@@ -2,6 +2,7 @@ package com.example.backend.dto.student;
 
 import com.example.backend.entity.Student;
 import com.example.backend.entity.enums.Gender;
+import com.example.backend.util.StudentAgeUtil;
 import java.time.LocalDate;
 
 public record StudentResponse(
@@ -16,7 +17,10 @@ public record StudentResponse(
     Boolean isActive,
     String address,
     String medicalInformation,
-    boolean linkedToParent
+    boolean linkedToParent,
+    String height,
+    String weight,
+    Integer ageYears
 ) {
     public static StudentResponse from(Student student) {
         return from(student, false);
@@ -35,6 +39,9 @@ public record StudentResponse(
             student.getIsActive(),
             student.getAddress(),
             student.getMedicalInformation(),
-            linkedToParent);
+            linkedToParent,
+            student.getHeight(),
+            student.getWeight(),
+            StudentAgeUtil.yearsNow(student.getDateOfBirth()));
     }
 }

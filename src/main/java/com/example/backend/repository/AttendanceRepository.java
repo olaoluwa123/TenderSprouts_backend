@@ -50,4 +50,23 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
         GROUP BY a.status
         """)
     List<Object[]> countByStatusForDate(@Param("date") LocalDate date);
+
+    @Query("""
+        SELECT COUNT(DISTINCT a.date)
+        FROM Attendance a
+        WHERE a.classId = :classId AND a.termId = :termId
+        """)
+    long countDistinctDatesByClassIdAndTermId(@Param("classId") Long classId, @Param("termId") Long termId);
+
+    long countByStudentIdAndTermIdAndStatus(Long studentId, Long termId, AttendanceStatus status);
+
+    @Query("""
+        SELECT COUNT(DISTINCT a.date)
+        FROM Attendance a
+        WHERE a.classId = :classId AND a.date BETWEEN :from AND :to
+        """)
+    long countDistinctDatesByClassIdAndDateBetween(
+        @Param("classId") Long classId,
+        @Param("from") LocalDate from,
+        @Param("to") LocalDate to);
 }

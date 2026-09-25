@@ -8,6 +8,7 @@ public record ParentResponse(
     String email,
     String fullName,
     String phone,
+    String address,
     Boolean isActive
 ) {
     public static ParentResponse from(Parent parent, String email) {
@@ -17,6 +18,7 @@ public record ParentResponse(
             email,
             parent.getFullName(),
             parent.getPhone(),
+            parent.getAddress(),
             parent.getIsActive());
     }
 }

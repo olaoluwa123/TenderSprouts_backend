@@ -31,6 +31,7 @@ import com.example.backend.repository.TermRepository;
 import com.example.backend.repository.TermResultRepository;
 import com.example.backend.repository.UserRepository;
 import com.example.backend.util.LetterGradeUtil;
+import com.example.backend.util.StudentAgeUtil;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -125,6 +126,9 @@ public class StudentProfileService {
             student.getLastName(),
             student.getDateOfBirth(),
             student.getGender() != null ? student.getGender().name() : null,
+            StudentAgeUtil.yearsNow(student.getDateOfBirth()),
+            student.getHeight(),
+            student.getWeight(),
             student.getAdmissionNumber(),
             student.getClassId(),
             className,

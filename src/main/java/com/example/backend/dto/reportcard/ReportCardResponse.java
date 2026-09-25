@@ -18,6 +18,19 @@ public record ReportCardResponse(
     Integer rankInClass,
     String comments,
     List<ReportCardSubjectSummary> subjectSummaries,
-    List<ReportCardSubjectGrade> subjectGrades
+    List<ReportCardSubjectGrade> subjectGrades,
+    String gender,
+    Integer ageYears,
+    String classTeacherName,
+    Integer daysSchoolOpened,
+    Integer daysPresent,
+    String reportDate,
+    String nextTermBegins,
+    BigDecimal totalScore,
+    String performanceBand,
+    String height,
+    String weight,
+    String attitudeComment,
+    String areasToImprove
 ) {
 }

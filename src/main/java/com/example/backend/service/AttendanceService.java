@@ -13,6 +13,7 @@ import com.example.backend.entity.Student;
 import com.example.backend.entity.Teacher;
 import com.example.backend.entity.Term;
 import com.example.backend.entity.enums.AttendanceStatus;
+import com.example.backend.exception.ConflictException;
 import com.example.backend.exception.ResourceNotFoundException;
 import com.example.backend.repository.AttendanceRepository;
 import com.example.backend.repository.SchoolClassRepository;
@@ -62,15 +63,16 @@ public class AttendanceService {
         this.auditService = auditService;
     }
 
-    public List<PupilAttendanceResponse> daily(LocalDate date) {
+    public List<PupilAttendanceResponse> daily(LocalDate date, SecurityUser actor) {
         LocalDate target = date != null ? date : LocalDate.now();
-        return mapPupilRows(attendanceRepository.findByDate(target));
+        return restrictTeacherRows(mapPupilRows(attendanceRepository.findByDate(target)), actor);
     }
 
-    public List<PupilAttendanceResponse> forClass(Long classId, LocalDate date) {
+    public List<PupilAttendanceResponse> forClass(Long classId, LocalDate date, SecurityUser actor) {
         if (!schoolClassRepository.existsById(classId)) {
             throw new ResourceNotFoundException("Class not found");
         }
+        authorizationService.requireTeacherForClass(actor, classId);
         LocalDate target = date != null ? date : LocalDate.now();
         Map<Long, Attendance> byStudent = attendanceRepository.findByClassIdAndDate(classId, target).stream()
             .collect(Collectors.toMap(Attendance::getStudentId, Function.identity(), (a, b) -> a));
@@ -108,13 +110,16 @@ public class AttendanceService {
         return mapPupilRows(attendanceRepository.findByStudentIdAndDateBetween(studentId, start, end));
     }
 
-    public List<PupilAttendanceResponse> absences(LocalDate from, LocalDate to, Long classId) {
+    public List<PupilAttendanceResponse> absences(LocalDate from, LocalDate to, Long classId, SecurityUser actor) {
         LocalDate start = from != null ? from : LocalDate.now().withDayOfMonth(1);
         LocalDate end = to != null ? to : LocalDate.now();
+        if (classId != null) {
+            authorizationService.requireTeacherForClass(actor, classId);
+        }
         List<Attendance> rows = classId != null
             ? attendanceRepository.findByClassIdAndDateBetweenAndStatusIn(classId, start, end, ABSENCE_STATUSES)
             : attendanceRepository.findByDateBetweenAndStatusIn(start, end, ABSENCE_STATUSES);
-        return mapPupilRows(rows);
+        return restrictTeacherRows(mapPupilRows(rows), actor);
     }
 
     @Transactional
@@ -122,12 +127,16 @@ public class AttendanceService {
         if (!schoolClassRepository.existsById(request.classId())) {
             throw new ResourceNotFoundException("Class not found");
         }
+        authorizationService.requireTeacherForClass(actor, request.classId());
         Term term = activeTermService.requireActiveTerm();
         Long sessionId = term.getSessionId();
         Long termId = term.getId();
         for (AttendanceMarkItem mark : request.marks()) {
             Student student = studentRepository.findById(mark.studentId())
                 .orElseThrow(() -> new ResourceNotFoundException("Student not found: " + mark.studentId()));
+            if (student.getClassId() == null || !student.getClassId().equals(request.classId())) {
+                throw new ConflictException("Student does not belong to the selected class: " + student.getId());
+            }
             Attendance row = attendanceRepository.findByStudentIdAndDate(student.getId(), request.date())
                 .orElseGet(Attendance::new);
             row.setStudentId(student.getId());
@@ -141,7 +150,7 @@ public class AttendanceService {
         }
         auditService.logAdminAction(
             actor, "MARK", "attendance", request.classId(), "class=" + request.classId() + " date=" + request.date());
-        return forClass(request.classId(), request.date());
+        return forClass(request.classId(), request.date(), actor);
     }
 
     public List<StaffAttendanceResponse> staffDaily(LocalDate date) {
@@ -174,6 +183,18 @@ public class AttendanceService {
         }
         auditService.logAdminAction(actor, "MARK", "staff_attendance", null, "date=" + request.date());
         return staffDaily(request.date());
+    }
+
+    private List<PupilAttendanceResponse> restrictTeacherRows(
+        List<PupilAttendanceResponse> rows,
+        SecurityUser actor) {
+        if (actor == null || actor.getRole() != com.example.backend.entity.User.Role.TEACHER) {
+            return rows;
+        }
+        java.util.Set<Long> assigned = authorizationService.getAssignedClassIds(actor);
+        return rows.stream()
+            .filter(row -> row.classId() != null && assigned.contains(row.classId()))
+            .toList();
     }
 
     private List<PupilAttendanceResponse> mapPupilRows(List<Attendance> rows) {

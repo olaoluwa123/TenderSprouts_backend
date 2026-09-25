@@ -164,6 +164,10 @@ class AuthIntegrationTest {
 
         String accessToken = JsonPath.read(loginResult.getResponse().getContentAsString(), "$.accessToken");
 
+        mockMvc.perform(get("/api/students")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken))
+            .andExpect(status().isForbidden());
+
         mockMvc.perform(post("/api/auth/change-password")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
                 .contentType(MediaType.APPLICATION_JSON)

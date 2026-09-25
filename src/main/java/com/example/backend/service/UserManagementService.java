@@ -1,12 +1,17 @@
 package com.example.backend.service;
 
 import com.example.backend.dto.dashboard.ActivityItem;
+import com.example.backend.dto.teacher.OnboardTeacherRequest;
+import com.example.backend.dto.teacher.TeacherResponse;
+import com.example.backend.dto.user.CreateUserRequest;
 import com.example.backend.dto.user.ForcePasswordResetResponse;
 import com.example.backend.dto.user.UpdateUserRoleRequest;
 import com.example.backend.dto.user.UpdateUserStatusRequest;
 import com.example.backend.dto.user.UserResponse;
+import com.example.backend.entity.Admin;
 import com.example.backend.entity.AuditLog;
 import com.example.backend.entity.User;
+import com.example.backend.exception.BadRequestException;
 import com.example.backend.exception.ConflictException;
 import com.example.backend.exception.ResourceNotFoundException;
 import com.example.backend.repository.AdminRepository;
@@ -34,6 +39,8 @@ public class UserManagementService {
     private final AuditLogRepository auditLogRepository;
     private final PasswordResetService passwordResetService;
     private final AuditService auditService;
+    private final PortalUserOnboardingService portalUserOnboardingService;
+    private final TeacherService teacherService;
 
     public UserManagementService(
         UserRepository userRepository,
@@ -42,7 +49,9 @@ public class UserManagementService {
         AdminRepository adminRepository,
         AuditLogRepository auditLogRepository,
         PasswordResetService passwordResetService,
-        AuditService auditService) {
+        AuditService auditService,
+        PortalUserOnboardingService portalUserOnboardingService,
+        TeacherService teacherService) {
         this.userRepository = userRepository;
         this.teacherRepository = teacherRepository;
         this.parentRepository = parentRepository;
@@ -50,6 +59,54 @@ public class UserManagementService {
         this.auditLogRepository = auditLogRepository;
         this.passwordResetService = passwordResetService;
         this.auditService = auditService;
+        this.portalUserOnboardingService = portalUserOnboardingService;
+        this.teacherService = teacherService;
+    }
+
+    @Transactional
+    public UserResponse create(CreateUserRequest request, SecurityUser actor) {
+        User.Role role = request.role();
+        if (role != User.Role.ADMIN && role != User.Role.TEACHER) {
+            throw new BadRequestException("Only ADMIN and TEACHER users can be created here");
+        }
+
+        String email = request.email().trim();
+        String fullName = request.fullName().trim();
+        String phone = blankToNull(request.phone());
+
+        if (role == User.Role.TEACHER) {
+            TeacherResponse teacher = teacherService.onboard(
+                new OnboardTeacherRequest(email, fullName, phone, null),
+                actor);
+            return userRepository.findByEmail(email)
+                .map(this::toResponse)
+                .orElseGet(() -> new UserResponse(
+                    null,
+                    email,
+                    fullName,
+                    User.Role.TEACHER,
+                    true,
+                    true,
+                    teacher.id(),
+                    null));
+        }
+
+        PortalUserOnboardingService.OnboardedUser onboarded =
+            portalUserOnboardingService.createUserWithTemporaryPassword(email, User.Role.ADMIN);
+
+        Admin admin = new Admin();
+        admin.setUserId(onboarded.user().getId());
+        admin.setFullName(fullName);
+        admin = adminRepository.save(admin);
+
+        portalUserOnboardingService.sendWelcomeCredentialsEmail(
+            onboarded.user(),
+            fullName,
+            "admin",
+            onboarded.plainPassword());
+
+        auditService.logAdminAction(actor, "ONBOARD_ADMIN", "user", onboarded.user().getId(), email);
+        return toResponse(onboarded.user());
     }
 
     public Page<UserResponse> list(User.Role role, Boolean isActive, Pageable pageable) {
@@ -125,7 +182,7 @@ public class UserManagementService {
         }
         return merged.values().stream()
             .sorted(Comparator.comparing(AuditLog::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
-            .map(this::toActivityItem)
+            .map(log -> toActivityItem(log, actorName(log)))
             .toList();
     }
 
@@ -198,7 +255,8 @@ public class UserManagementService {
         };
     }
 
-    private ActivityItem toActivityItem(AuditLog log) {
+    private ActivityItem toActivityItem(AuditLog log, String userName) {
+        String resolvedName = userName != null && !userName.isBlank() ? userName : "System";
         return new ActivityItem(
             log.getId(),
             log.getAction(),
@@ -206,7 +264,23 @@ public class UserManagementService {
             log.getEntityId(),
             log.getDetails(),
             log.getUserRole(),
+            resolvedName,
             log.getCreatedAt());
+    }
+
+    private String actorName(AuditLog log) {
+        if (log.getUserId() == null) {
+            return null;
+        }
+        return userRepository.findById(log.getUserId())
+            .map(user -> {
+                String profileName = resolveProfile(user).fullName();
+                if (profileName != null && !profileName.isBlank()) {
+                    return profileName;
+                }
+                return user.getEmail();
+            })
+            .orElse(null);
     }
 
     private static String blankToNull(String value) {

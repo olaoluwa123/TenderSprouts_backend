@@ -149,9 +149,9 @@ public class FeeController {
     @GetMapping("/invoices")
     @PreAuthorize("hasRole('ADMIN')")
     public List<InvoiceResponse> listInvoices(
-        @RequestParam Long classId,
-        @RequestParam Long termId) {
-        return feeService.listInvoicesForClassTerm(classId, termId);
+        @RequestParam Long termId,
+        @RequestParam(required = false) Long classId) {
+        return feeService.listInvoicesForTerm(termId, classId);
     }
 
     @PostMapping("/invoices/{id}/mark-paid")
@@ -162,8 +162,13 @@ public class FeeController {
 
     @PostMapping("/payments/initialize")
     @PreAuthorize("hasRole('PARENT')")
-    public InitializePaymentResponse initializePayment() {
-        return feePaymentService.initializeForParent(SecurityUtils.requireCurrentUser());
+    public InitializePaymentResponse initializePayment(
+        @RequestParam(required = false) Long sessionId,
+        @RequestParam(required = false) Long termId) {
+        return feePaymentService.initializeForParent(
+            SecurityUtils.requireCurrentUser(),
+            sessionId,
+            termId);
     }
 
     @PostMapping("/payments/verify")

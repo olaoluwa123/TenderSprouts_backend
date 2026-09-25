@@ -10,6 +10,7 @@ import com.example.backend.entity.Parent;
 import com.example.backend.entity.ParentStudent;
 import com.example.backend.entity.SchoolCalendarEvent;
 import com.example.backend.entity.SchoolClass;
+import com.example.backend.entity.enums.ClassGroup;
 import com.example.backend.entity.Student;
 import com.example.backend.entity.StudentEnrollment;
 import com.example.backend.entity.Subject;
@@ -168,7 +169,7 @@ public class DevDataSeeder implements ApplicationRunner {
         Parent parent = new Parent();
         parent.setUserId(parentUser.getId());
         parent.setFullName("John Parent");
-        parent.setPhone("555-0100");
+        parent.setPhone("08037696783");
         parent = parentRepository.save(parent);
 
         AcademicSession session = academicSessionRepository.findFirstByIsActiveTrue().orElseThrow();
@@ -177,6 +178,7 @@ public class DevDataSeeder implements ApplicationRunner {
 
         SchoolClass schoolClass = new SchoolClass();
         schoolClass.setName("JSS 1A");
+        schoolClass.setClassGroup(ClassGroup.PRIMARY);
         schoolClass = schoolClassRepository.save(schoolClass);
 
         TeacherClass teacherClass = new TeacherClass();
@@ -189,7 +191,10 @@ public class DevDataSeeder implements ApplicationRunner {
         student.setFirstName("Ada");
         student.setLastName("Okafor");
         student.setAdmissionNumber("ADM-001");
+        student.setDateOfBirth(LocalDate.of(2018, 3, 12));
         student.setGender(Gender.FEMALE);
+        student.setHeight("1.20m");
+        student.setWeight("24kg");
         student.setClassId(schoolClass.getId());
         student.setIsActive(true);
         student = studentRepository.save(student);

@@ -133,6 +133,7 @@ class AcademicFeaturesIntegrationTest {
         Parent parent = new Parent();
         parent.setUserId(parentUser.getId());
         parent.setFullName("Academic Parent");
+        parent.setPhone("08012345678");
         parent = parentRepository.save(parent);
 
         AcademicSession session = new AcademicSession();

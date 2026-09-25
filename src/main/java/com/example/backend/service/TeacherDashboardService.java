@@ -4,6 +4,7 @@ import com.example.backend.dto.dashboard.GradeDistributionBucket;
 import com.example.backend.dto.dashboard.GradingProgress;
 import com.example.backend.dto.dashboard.StudentPerformanceItem;
 import com.example.backend.dto.dashboard.TeacherDashboardResponse;
+import com.example.backend.dto.dashboard.TeacherDashboardResponse.AssignedClass;
 import com.example.backend.dto.dashboard.UpcomingExamItem;
 import com.example.backend.entity.AcademicSession;
 import com.example.backend.entity.ExamTimetableSlot;
@@ -37,7 +38,6 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -84,6 +84,10 @@ public class TeacherDashboardService {
     }
 
     public TeacherDashboardResponse getDashboard(SecurityUser actor) {
+        return getDashboard(actor, null);
+    }
+
+    public TeacherDashboardResponse getDashboard(SecurityUser actor, Long requestedClassId) {
         if (actor.getRole() != User.Role.TEACHER && actor.getRole() != User.Role.ADMIN) {
             throw new ForbiddenException("Teacher access required");
         }
@@ -96,18 +100,27 @@ public class TeacherDashboardService {
         Long sessionId = session.getId();
         Long termId = term.getId();
 
-        Optional<TeacherClass> assignment = actor.getRole() == User.Role.TEACHER
-            ? teacherClassRepository.findByTeacherIdAndIsActiveTrue(actor.getProfileId()).stream().findFirst()
-            : Optional.empty();
+        List<TeacherClass> assignments = actor.getRole() == User.Role.TEACHER
+            ? teacherClassRepository.findByTeacherIdAndIsActiveTrue(actor.getProfileId())
+            : List.of();
+        List<AssignedClass> assignedClasses = assignments.stream()
+            .map(row -> new AssignedClass(
+                row.getClassId(),
+                schoolClassRepository.findById(row.getClassId())
+                    .map(SchoolClass::getName)
+                    .orElse("Class #" + row.getClassId())))
+            .toList();
 
-        if (assignment.isEmpty()) {
+        if (assignedClasses.isEmpty()) {
             return emptyTeacherDashboard(session, term);
         }
 
-        Long classId = assignment.get().getClassId();
-        String className = schoolClassRepository.findById(classId)
-            .map(SchoolClass::getName)
-            .orElse("Class #" + classId);
+        AssignedClass selected = assignedClasses.stream()
+            .filter(row -> requestedClassId == null || row.classId().equals(requestedClassId))
+            .findFirst()
+            .orElseThrow(() -> new ForbiddenException("Not assigned to this class"));
+        Long classId = selected.classId();
+        String className = selected.className();
 
         long studentCount = studentEnrollmentRepository.countByClassIdAndSessionIdAndStatus(
             classId, sessionId, EnrollmentStatus.ACTIVE);
@@ -135,6 +148,7 @@ public class TeacherDashboardService {
             term.getName(),
             classId,
             className,
+            assignedClasses,
             studentCount,
             classAverage,
             submissionStatus != null ? submissionStatus.name() : "NOT_STARTED",
@@ -153,6 +167,7 @@ public class TeacherDashboardService {
             term.getName(),
             null,
             null,
+            List.of(),
             0,
             null,
             "NOT_STARTED",

@@ -1,5 +1,6 @@
 package com.example.backend.service;
 
+import com.example.backend.config.AppFrontendProperties;
 import com.example.backend.dto.fee.BatchFeeAmountItem;
 import com.example.backend.dto.fee.BatchFeeAmountsRequest;
 import com.example.backend.dto.fee.CreateFeeStructureRequest;
@@ -18,6 +19,7 @@ import com.example.backend.dto.fee.RepublishPupilPreviewItem;
 import com.example.backend.dto.fee.SaveFeeTemplateRequest;
 import com.example.backend.dto.fee.SchoolFeeTemplateResponse;
 import com.example.backend.dto.fee.UpdateFeeStructureRequest;
+import com.example.backend.entity.AcademicSession;
 import com.example.backend.entity.FeeSchoolTemplateItem;
 import com.example.backend.entity.FeeStructure;
 import com.example.backend.entity.FeeTemplate;
@@ -33,6 +35,7 @@ import com.example.backend.entity.enums.InvoiceStatus;
 import com.example.backend.exception.ConflictException;
 import com.example.backend.exception.ForbiddenException;
 import com.example.backend.exception.ResourceNotFoundException;
+import com.example.backend.repository.AcademicSessionRepository;
 import com.example.backend.repository.FeeSchoolTemplateItemRepository;
 import com.example.backend.repository.FeeStructureRepository;
 import com.example.backend.repository.FeeTemplateRepository;
@@ -46,6 +49,7 @@ import com.example.backend.security.SecurityUser;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -66,11 +70,15 @@ public class FeeService {
     private final InvoiceRepository invoiceRepository;
     private final SchoolClassRepository schoolClassRepository;
     private final TermRepository termRepository;
+    private final AcademicSessionRepository academicSessionRepository;
     private final StudentRepository studentRepository;
     private final ParentRepository parentRepository;
     private final ParentStudentRepository parentStudentRepository;
     private final AuditService auditService;
     private final ActiveTermService activeTermService;
+    private final ParentNotifyService parentNotifyService;
+    private final EmailService emailService;
+    private final AppFrontendProperties frontendProperties;
 
     public FeeService(
         FeeStructureRepository feeStructureRepository,
@@ -79,22 +87,30 @@ public class FeeService {
         InvoiceRepository invoiceRepository,
         SchoolClassRepository schoolClassRepository,
         TermRepository termRepository,
+        AcademicSessionRepository academicSessionRepository,
         StudentRepository studentRepository,
         ParentRepository parentRepository,
         ParentStudentRepository parentStudentRepository,
         AuditService auditService,
-        ActiveTermService activeTermService) {
+        ActiveTermService activeTermService,
+        ParentNotifyService parentNotifyService,
+        EmailService emailService,
+        AppFrontendProperties frontendProperties) {
         this.feeStructureRepository = feeStructureRepository;
         this.feeTemplateRepository = feeTemplateRepository;
         this.feeSchoolTemplateItemRepository = feeSchoolTemplateItemRepository;
         this.invoiceRepository = invoiceRepository;
         this.schoolClassRepository = schoolClassRepository;
         this.termRepository = termRepository;
+        this.academicSessionRepository = academicSessionRepository;
         this.studentRepository = studentRepository;
         this.parentRepository = parentRepository;
         this.parentStudentRepository = parentStudentRepository;
         this.auditService = auditService;
         this.activeTermService = activeTermService;
+        this.parentNotifyService = parentNotifyService;
+        this.emailService = emailService;
+        this.frontendProperties = frontendProperties;
     }
 
     @Transactional(readOnly = true)
@@ -395,6 +411,7 @@ public class FeeService {
 
         int structuresPublished = 0;
         int invoicesCreated = 0;
+        Set<Long> invoicedStudentIds = new HashSet<>();
         LocalDateTime now = LocalDateTime.now();
 
         for (FeeStructure fee : structures) {
@@ -416,16 +433,20 @@ public class FeeService {
                 invoice.setStatus(InvoiceStatus.PENDING);
                 invoiceRepository.save(invoice);
                 invoicesCreated++;
+                invoicedStudentIds.add(pupil.getId());
             }
         }
+
+        int parentsNotified = notifyParentsOfFees(classId, termId, invoicedStudentIds);
 
         auditService.logAdminAction(
             actor,
             "PUBLISH",
             "fee_structure",
             classId,
-            "termId=" + termId + ", invoices=" + invoicesCreated);
-        return new PublishFeesResponse(classId, termId, structuresPublished, invoicesCreated);
+            "termId=" + termId + ", invoices=" + invoicesCreated + ", parentsNotified=" + parentsNotified);
+        return new PublishFeesResponse(
+            classId, termId, structuresPublished, invoicesCreated, parentsNotified);
     }
 
     @Transactional(readOnly = true)
@@ -466,22 +487,28 @@ public class FeeService {
         List<Student> pupils = activePupilsInClass(classId);
         int pupilsInvoiced = 0;
         int invoicesCreated = 0;
+        Set<Long> invoicedStudentIds = new HashSet<>();
 
         for (Student pupil : pupils) {
             int createdForPupil = createMissingInvoicesForStudent(pupil.getId(), publishedStructures);
             invoicesCreated += createdForPupil;
             if (createdForPupil > 0) {
                 pupilsInvoiced++;
+                invoicedStudentIds.add(pupil.getId());
             }
         }
+
+        int parentsNotified = notifyParentsOfFees(classId, termId, invoicedStudentIds);
 
         auditService.logAdminAction(
             actor,
             "REPUBLISH",
             "fee_structure",
             classId,
-            "termId=" + termId + ", pupils=" + pupilsInvoiced + ", invoices=" + invoicesCreated);
-        return new RepublishFeesResponse(classId, termId, pupilsInvoiced, invoicesCreated);
+            "termId=" + termId + ", pupils=" + pupilsInvoiced
+                + ", invoices=" + invoicesCreated + ", parentsNotified=" + parentsNotified);
+        return new RepublishFeesResponse(
+            classId, termId, pupilsInvoiced, invoicesCreated, parentsNotified);
     }
 
     @Transactional
@@ -525,35 +552,49 @@ public class FeeService {
 
     @Transactional(readOnly = true)
     public List<InvoiceResponse> listInvoicesForClassTerm(Long classId, Long termId) {
-        List<FeeStructure> structures = feeStructureRepository.findByClassIdAndTermIdOrderByNameAsc(classId, termId);
+        return listInvoicesForTerm(termId, classId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<InvoiceResponse> listInvoicesForTerm(Long termId, Long classId) {
+        List<FeeStructure> structures = classId != null
+            ? feeStructureRepository.findByClassIdAndTermIdOrderByNameAsc(classId, termId)
+            : feeStructureRepository.findByTermIdOrderByNameAsc(termId);
         if (structures.isEmpty()) {
             return List.of();
         }
         Map<Long, FeeStructure> byId = structures.stream()
-            .collect(Collectors.toMap(FeeStructure::getId, f -> f));
-        List<Long> studentIds = studentRepository.findByClassId(classId).stream()
-            .map(Student::getId)
-            .toList();
-        if (studentIds.isEmpty()) {
+            .collect(Collectors.toMap(FeeStructure::getId, f -> f, (a, b) -> a));
+        List<Invoice> invoices = invoiceRepository.findByFeeStructureIdInOrderByDueDateAscCreatedAtDesc(byId.keySet());
+        if (invoices.isEmpty()) {
             return List.of();
         }
+        Set<Long> studentIds = invoices.stream().map(Invoice::getStudentId).collect(Collectors.toSet());
         Map<Long, Student> students = studentRepository.findAllById(studentIds).stream()
             .collect(Collectors.toMap(Student::getId, s -> s));
+        Map<Long, Parent> primaryParents = primaryParentByStudentId(studentIds);
         Map<Long, String> classNames = classNameMap();
         Map<Long, String> termNames = termNameMap();
+        Map<Long, String> sessionNames = sessionNameMap();
 
-        return invoiceRepository.findByStudentIdInOrderByDueDateAscCreatedAtDesc(studentIds).stream()
-            .filter(inv -> byId.containsKey(inv.getFeeStructureId()))
+        return invoices.stream()
             .map(inv -> {
                 FeeStructure fee = byId.get(inv.getFeeStructureId());
                 Student student = students.get(inv.getStudentId());
+                Parent parent = primaryParents.get(inv.getStudentId());
+                Long sessionId = resolveSessionId(fee);
                 return InvoiceResponse.from(
                     inv,
                     student == null ? null : formatStudentName(student),
                     student == null ? null : student.getAdmissionNumber(),
+                    parent == null ? null : parent.getId(),
+                    parent == null ? null : parent.getFullName(),
+                    parent == null ? null : parent.getPhone(),
                     fee.getName(),
                     fee.getClassId(),
                     classNames.get(fee.getClassId()),
+                    sessionId,
+                    sessionId == null ? null : sessionNames.get(sessionId),
                     fee.getTermId(),
                     termNames.get(fee.getTermId()));
             })
@@ -590,6 +631,13 @@ public class FeeService {
 
     @Transactional(readOnly = true)
     public List<Invoice> pendingPayableInvoicesForParent(SecurityUser actor) {
+        return pendingPayableInvoicesForParent(actor, null, null);
+    }
+
+    public List<Invoice> pendingPayableInvoicesForParent(
+        SecurityUser actor,
+        Long sessionId,
+        Long termId) {
         if (actor.getRole() != User.Role.PARENT || actor.getProfileId() == null) {
             throw new ForbiddenException("Parent profile required");
         }
@@ -614,11 +662,23 @@ public class FeeService {
         return invoices.stream()
             .filter(invoice -> {
                 FeeStructure fee = feesById.get(invoice.getFeeStructureId());
-                return fee != null
-                    && fee.getPublishedAt() != null
-                    && Boolean.TRUE.equals(fee.getIsActive())
-                    && invoice.getAmount() != null
-                    && invoice.getAmount().compareTo(BigDecimal.ZERO) > 0;
+                if (fee == null
+                    || fee.getPublishedAt() == null
+                    || !Boolean.TRUE.equals(fee.getIsActive())
+                    || invoice.getAmount() == null
+                    || invoice.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
+                    return false;
+                }
+                if (termId != null && !termId.equals(fee.getTermId())) {
+                    return false;
+                }
+                if (sessionId != null) {
+                    Long feeSessionId = resolveSessionId(fee);
+                    if (!sessionId.equals(feeSessionId)) {
+                        return false;
+                    }
+                }
+                return true;
             })
             .toList();
     }
@@ -653,6 +713,8 @@ public class FeeService {
             .collect(Collectors.toMap(Student::getId, s -> s));
         Map<Long, String> classNames = classNameMap();
         Map<Long, String> termNames = termNameMap();
+        Map<Long, String> sessionNames = sessionNameMap();
+        Map<Long, Parent> primaryParents = primaryParentByStudentId(childIds);
         List<Invoice> invoices = invoiceRepository.findByStudentIdInOrderByDueDateAscCreatedAtDesc(childIds);
         Map<Long, FeeStructure> feesById = new HashMap<>();
         Set<Long> feeIds = invoices.stream().map(Invoice::getFeeStructureId).collect(Collectors.toSet());
@@ -681,19 +743,26 @@ public class FeeService {
                 continue;
             }
             List<Invoice> childInvoices = byStudent.getOrDefault(childId, List.of());
+            Parent linkedParent = primaryParents.get(childId);
             List<InvoiceResponse> items = childInvoices.stream()
                 .map(inv -> {
                     FeeStructure fee = feesById.get(inv.getFeeStructureId());
                     if (fee == null || fee.getPublishedAt() == null || Boolean.FALSE.equals(fee.getIsActive())) {
                         return null;
                     }
+                    Long sessionId = resolveSessionId(fee);
                     return InvoiceResponse.from(
                         inv,
                         formatStudentName(student),
                         student.getAdmissionNumber(),
+                        linkedParent == null ? null : linkedParent.getId(),
+                        linkedParent == null ? null : linkedParent.getFullName(),
+                        linkedParent == null ? null : linkedParent.getPhone(),
                         fee.getName(),
                         fee.getClassId(),
                         classNames.get(fee.getClassId()),
+                        sessionId,
+                        sessionId == null ? null : sessionNames.get(sessionId),
                         fee.getTermId(),
                         termNames.get(fee.getTermId()));
                 })
@@ -735,13 +804,21 @@ public class FeeService {
     private InvoiceResponse toInvoiceResponse(Invoice invoice) {
         Student student = studentRepository.findById(invoice.getStudentId()).orElse(null);
         FeeStructure fee = findStructure(invoice.getFeeStructureId());
+        Long sessionId = resolveSessionId(fee);
+        Parent parent = primaryParentByStudentId(List.of(invoice.getStudentId()))
+            .get(invoice.getStudentId());
         return InvoiceResponse.from(
             invoice,
             student == null ? null : formatStudentName(student),
             student == null ? null : student.getAdmissionNumber(),
+            parent == null ? null : parent.getId(),
+            parent == null ? null : parent.getFullName(),
+            parent == null ? null : parent.getPhone(),
             fee.getName(),
             fee.getClassId(),
             classNameMap().get(fee.getClassId()),
+            sessionId,
+            sessionId == null ? null : sessionNameMap().get(sessionId),
             fee.getTermId(),
             termNameMap().get(fee.getTermId()));
     }
@@ -782,6 +859,51 @@ public class FeeService {
             .collect(Collectors.toMap(Term::getId, Term::getName, (a, b) -> a));
     }
 
+    private Map<Long, String> sessionNameMap() {
+        return academicSessionRepository.findAll().stream()
+            .collect(Collectors.toMap(AcademicSession::getId, AcademicSession::getName, (a, b) -> a));
+    }
+
+    private Long resolveSessionId(FeeStructure fee) {
+        if (fee == null) {
+            return null;
+        }
+        if (fee.getSessionId() != null) {
+            return fee.getSessionId();
+        }
+        if (fee.getTermId() == null) {
+            return null;
+        }
+        return termRepository.findById(fee.getTermId())
+            .map(Term::getSessionId)
+            .orElse(null);
+    }
+
+    private Map<Long, Parent> primaryParentByStudentId(Collection<Long> studentIds) {
+        if (studentIds == null || studentIds.isEmpty()) {
+            return Map.of();
+        }
+        List<ParentStudent> links = parentStudentRepository.findByStudentIdIn(studentIds);
+        if (links.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, Long> parentIdByStudent = new HashMap<>();
+        for (ParentStudent link : links) {
+            parentIdByStudent.merge(link.getStudentId(), link.getParentId(), Math::min);
+        }
+        Set<Long> parentIds = new HashSet<>(parentIdByStudent.values());
+        Map<Long, Parent> parentsById = parentRepository.findAllById(parentIds).stream()
+            .collect(Collectors.toMap(Parent::getId, parent -> parent, (a, b) -> a));
+        Map<Long, Parent> result = new HashMap<>();
+        for (Map.Entry<Long, Long> entry : parentIdByStudent.entrySet()) {
+            Parent parent = parentsById.get(entry.getValue());
+            if (parent != null) {
+                result.put(entry.getKey(), parent);
+            }
+        }
+        return result;
+    }
+
     private void validateClassAndTerm(Long classId, Long termId) {
         if (!schoolClassRepository.existsById(classId)) {
             throw new ResourceNotFoundException("Class not found");
@@ -789,6 +911,31 @@ public class FeeService {
         if (!termRepository.existsById(termId)) {
             throw new ResourceNotFoundException("Term not found");
         }
+    }
+
+    private int notifyParentsOfFees(Long classId, Long termId, Set<Long> invoicedStudentIds) {
+        if (invoicedStudentIds == null || invoicedStudentIds.isEmpty()) {
+            return 0;
+        }
+        String className = schoolClassRepository.findById(classId)
+            .map(SchoolClass::getName)
+            .orElse("their class");
+        Term term = termRepository.findById(termId).orElse(null);
+        String termName = term != null ? term.getName() : "this term";
+        String portalUrl = frontendProperties.getOrigin().replaceAll("/$", "") + "/parent/fees";
+        return parentNotifyService.notifyParentsForStudents(
+            invoicedStudentIds,
+            (user, parent) -> {
+                List<String> childNames = parentNotifyService.childNamesForParent(
+                    parent.getId(), invoicedStudentIds);
+                emailService.sendFeesPublished(
+                    user.getEmail(),
+                    parent.getFullName(),
+                    String.join(", ", childNames),
+                    className,
+                    termName,
+                    portalUrl);
+            });
     }
 
     private List<FeeStructure> publishedActiveStructures(Long classId, Long termId) {

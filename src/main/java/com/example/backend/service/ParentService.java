@@ -20,6 +20,7 @@ import com.example.backend.repository.ParentStudentRepository;
 import com.example.backend.repository.StudentRepository;
 import com.example.backend.repository.UserRepository;
 import com.example.backend.security.SecurityUser;
+import com.example.backend.util.TemporaryPasswordGenerator;
 import java.util.List;
 import java.util.Set;
 import org.springframework.data.domain.Page;
@@ -145,19 +146,29 @@ public class ParentService {
         if (userRepository.findByEmail(request.email()).isPresent()) {
             throw new ConflictException("Email already registered");
         }
+        String plainPassword = TemporaryPasswordGenerator.generate();
         User user = new User();
         user.setEmail(request.email());
-        user.setPassword(passwordEncoder.encode(request.password()));
+        user.setPassword(passwordEncoder.encode(plainPassword));
         user.setRole(User.Role.PARENT);
         user.setIsActive(true);
+        user.setMustChangePassword(true);
         user = userRepository.save(user);
 
         Parent parent = new Parent();
         parent.setUserId(user.getId());
         parent.setFullName(request.fullName());
         parent.setPhone(request.phone());
+        parent.setAddress(blankToNull(request.address()));
         parent.setIsActive(true);
         parent = parentRepository.save(parent);
+
+        portalUserOnboardingService.sendWelcomeCredentials(
+            user,
+            parent.getFullName(),
+            "parent",
+            plainPassword,
+            parent.getPhone());
 
         auditService.logAdminAction(actor, "CREATE", "parent", parent.getId(), parent.getFullName());
         return ParentResponse.from(parent, user.getEmail());
@@ -187,11 +198,12 @@ public class ParentService {
         link.setStudentId(studentId);
         parentStudentRepository.save(link);
 
-        portalUserOnboardingService.sendWelcomeCredentialsEmail(
+        portalUserOnboardingService.sendWelcomeCredentials(
             user,
             parent.getFullName(),
             "parent",
-            onboarded.plainPassword());
+            onboarded.plainPassword(),
+            parent.getPhone());
 
         auditService.logAdminAction(actor, "ONBOARD_PARENT", "parent", parent.getId(),
             "studentId=" + studentId);
@@ -279,5 +291,13 @@ public class ParentService {
             .map(LinkedStudentSummary::from)
             .toList();
         return ParentListResponse.from(parent, email, loginActive, students);
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

@@ -2,6 +2,7 @@ package com.example.backend;
 
 import com.example.backend.config.AppFrontendProperties;
 import com.example.backend.config.AppMailProperties;
+import com.example.backend.config.AppWhatsAppProperties;
 import com.example.backend.config.AuthProperties;
 import com.example.backend.config.JwtProperties;
 import com.example.backend.config.PaystackProperties;
@@ -17,6 +18,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
     AuthProperties.class,
     SeedProperties.class,
     AppMailProperties.class,
+    AppWhatsAppProperties.class,
     AppFrontendProperties.class,
     SecurityProperties.class,
     PaystackProperties.class

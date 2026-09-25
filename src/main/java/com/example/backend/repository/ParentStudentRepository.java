@@ -18,6 +18,13 @@ public interface ParentStudentRepository extends JpaRepository<ParentStudent, Lo
     List<ParentStudent> findByStudentId(Long studentId);
 
     @Query("""
+        SELECT ps
+        FROM ParentStudent ps
+        WHERE ps.studentId IN :studentIds
+        """)
+    List<ParentStudent> findByStudentIdIn(@Param("studentIds") Collection<Long> studentIds);
+
+    @Query("""
         SELECT DISTINCT ps.studentId
         FROM ParentStudent ps
         WHERE ps.studentId IN :studentIds

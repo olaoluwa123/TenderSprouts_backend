@@ -18,13 +18,15 @@ public class AuditService {
 
     @Transactional
     public void logAdminAction(SecurityUser actor, String action, String entityType, Long entityId, String details) {
-        if (actor.getRole() != User.Role.ADMIN) {
+        if (actor.getRole() != User.Role.ADMIN && actor.getRole() != User.Role.TEACHER) {
             return;
         }
         AuditLog log = new AuditLog();
         log.setUserId(actor.getUserId());
         log.setUserRole(actor.getRole().name());
-        log.setAdminId(actor.getProfileId());
+        if (actor.getRole() == User.Role.ADMIN) {
+            log.setAdminId(actor.getProfileId());
+        }
         log.setAction(action);
         log.setEntityType(entityType);
         log.setEntityId(entityId);

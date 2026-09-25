@@ -39,6 +39,11 @@ spring:
             enable: ${MAIL_STARTTLS:true}
           ssl:
             enable: ${MAIL_SSL:false}
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:guest}
+    password: ${SPRING_RABBITMQ_PASSWORD:guest}
 
 management:
   health:
@@ -51,6 +56,18 @@ app:
   mail:
     enabled: ${MAIL_ENABLED:false}
     from: ${MAIL_FROM:noreply@school.local}
+  whatsapp:
+    enabled: ${WHATSAPP_ENABLED:false}
+    api-version: ${WHATSAPP_API_VERSION:v21.0}
+    phone-number-id: ${WHATSAPP_PHONE_NUMBER_ID:}
+    access-token: ${WHATSAPP_ACCESS_TOKEN:}
+    language-code: ${WHATSAPP_LANGUAGE_CODE:en}
+    templates:
+      welcome: ${WHATSAPP_TPL_WELCOME:portal_welcome}
+      password-reset: ${WHATSAPP_TPL_PASSWORD_RESET:portal_password_reset}
+      fees: ${WHATSAPP_TPL_FEES:fees_published}
+      results: ${WHATSAPP_TPL_RESULTS:results_published}
+      exam: ${WHATSAPP_TPL_EXAM:exam_timetable_published}
   jwt:
     secret: ${JWT_SECRET:dev-only-change-me-use-32-chars-minimum!!}
     access-token-expiration-ms: ${JWT_ACCESS_EXPIRATION_MS:900000}
@@ -146,11 +163,16 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.H2Dialect
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration
 
 app:
   seed:
     enabled: false
   mail:
+    enabled: false
+  whatsapp:
     enabled: false
   security:
     rate-limit:

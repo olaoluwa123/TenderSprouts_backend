@@ -8,7 +8,9 @@ import com.example.backend.dto.classroom.ClassProfileResponse;
 import com.example.backend.dto.classroom.ClassSubjectResponse;
 import com.example.backend.dto.classroom.CreateSchoolClassRequest;
 import com.example.backend.dto.classroom.SchoolClassResponse;
+import com.example.backend.dto.classroom.UpdateSchoolClassRequest;
 import com.example.backend.dto.grade.GradeResponse;
+import com.example.backend.entity.enums.ClassGroup;
 import com.example.backend.security.SecurityUtils;
 import com.example.backend.service.GradeService;
 import com.example.backend.service.SchoolClassService;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -43,15 +46,17 @@ public class SchoolClassController {
     }
 
     @GetMapping
-    public Page<ClassListItemResponse> list(Pageable pageable) {
-        return schoolClassService.list(pageable);
+    public Page<ClassListItemResponse> list(
+        @RequestParam(required = false) ClassGroup group,
+        Pageable pageable) {
+        return schoolClassService.list(group, pageable, SecurityUtils.requireCurrentUser());
     }
 
     @GetMapping("/{classId}")
     public ClassProfileResponse getProfile(
         @PathVariable Long classId,
         @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        return schoolClassService.getProfile(classId, date);
+        return schoolClassService.getProfile(classId, date, SecurityUtils.requireCurrentUser());
     }
 
     @PostMapping
@@ -59,6 +64,14 @@ public class SchoolClassController {
     @ResponseStatus(HttpStatus.CREATED)
     public SchoolClassResponse create(@Valid @RequestBody CreateSchoolClassRequest request) {
         return schoolClassService.create(request, SecurityUtils.requireCurrentUser());
+    }
+
+    @PutMapping("/{classId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public SchoolClassResponse update(
+        @PathVariable Long classId,
+        @Valid @RequestBody UpdateSchoolClassRequest request) {
+        return schoolClassService.update(classId, request, SecurityUtils.requireCurrentUser());
     }
 
     @PostMapping("/subjects/bulk-assign")
@@ -70,7 +83,7 @@ public class SchoolClassController {
 
     @GetMapping("/{classId}/subjects")
     public List<ClassSubjectResponse> listSubjects(@PathVariable Long classId) {
-        return schoolClassService.listSubjects(classId);
+        return schoolClassService.listSubjects(classId, SecurityUtils.requireCurrentUser());
     }
 
     @PostMapping("/{classId}/subjects")

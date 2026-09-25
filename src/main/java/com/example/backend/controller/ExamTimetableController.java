@@ -65,7 +65,7 @@ public class ExamTimetableController {
     }
 
     @PostMapping("/api/classes/{classId}/exam-timetable/publish")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','TEACHER')")
     public PublishExamTimetableResponse publish(
         @PathVariable Long classId,
         @RequestParam Long termId) {

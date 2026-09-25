@@ -1,9 +1,10 @@
 package com.example.backend.controller;
 
 import com.example.backend.dto.classroom.TeacherAssignmentResponse;
+import com.example.backend.dto.student.ImportCsvJobAcceptedResponse;
 import com.example.backend.dto.teacher.CreateTeacherTimetableSlotRequest;
 import com.example.backend.dto.teacher.OnboardTeacherRequest;
-import com.example.backend.dto.teacher.TeacherImportCsvResponse;
+import com.example.backend.dto.teacher.TeacherImportCsvJobResponse;
 import com.example.backend.dto.teacher.TeacherProfileResponse;
 import com.example.backend.dto.teacher.TeacherResponse;
 import com.example.backend.dto.teacher.TeacherSubjectResponse;
@@ -149,8 +150,15 @@ public class TeacherController {
 
     @PostMapping(value = "/import-csv", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
-    public TeacherImportCsvResponse importCsv(@RequestParam("file") MultipartFile file) {
-        return teacherCsvImportService.importFile(file, SecurityUtils.requireCurrentUser());
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public ImportCsvJobAcceptedResponse importCsv(@RequestParam("file") MultipartFile file) {
+        return teacherCsvImportService.enqueueImport(file, SecurityUtils.requireCurrentUser());
+    }
+
+    @GetMapping("/import-csv/jobs/{jobId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public TeacherImportCsvJobResponse getImportCsvJob(@PathVariable Long jobId) {
+        return teacherCsvImportService.getJob(jobId);
     }
 
     @GetMapping("/{teacherId}/classes")
@@ -186,14 +194,14 @@ public class TeacherController {
     @DeleteMapping("/{teacherId}/classes")
     @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void unassignClass(@PathVariable Long teacherId) {
-        teacherAssignmentService.unassignClass(teacherId, SecurityUtils.requireCurrentUser());
+    public void unassignClass(@PathVariable Long teacherId, @RequestParam Long classId) {
+        teacherAssignmentService.unassignClass(teacherId, classId, SecurityUtils.requireCurrentUser());
     }
 
     @PostMapping("/{teacherId}/classes/unassign")
     @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void unassignClassPost(@PathVariable Long teacherId) {
-        teacherAssignmentService.unassignClass(teacherId, SecurityUtils.requireCurrentUser());
+    public void unassignClassPost(@PathVariable Long teacherId, @RequestParam Long classId) {
+        teacherAssignmentService.unassignClass(teacherId, classId, SecurityUtils.requireCurrentUser());
     }
 }

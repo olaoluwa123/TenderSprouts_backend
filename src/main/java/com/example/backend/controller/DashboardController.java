@@ -45,7 +45,7 @@ public class DashboardController {
 
     @GetMapping("/teacher")
     @PreAuthorize("hasAnyRole('TEACHER', 'ADMIN')")
-    public TeacherDashboardResponse teacherDashboard() {
-        return teacherDashboardService.getDashboard(SecurityUtils.requireCurrentUser());
+    public TeacherDashboardResponse teacherDashboard(@RequestParam(required = false) Long classId) {
+        return teacherDashboardService.getDashboard(SecurityUtils.requireCurrentUser(), classId);
     }
 }

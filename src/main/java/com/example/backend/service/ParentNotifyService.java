@@ -15,18 +15,22 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 @Service
-public class ParentEmailService {
+public class ParentNotifyService {
+
+    private static final Logger log = LoggerFactory.getLogger(ParentNotifyService.class);
 
     private final ParentStudentRepository parentStudentRepository;
     private final ParentRepository parentRepository;
     private final StudentRepository studentRepository;
     private final UserRepository userRepository;
 
-    public ParentEmailService(
+    public ParentNotifyService(
         ParentStudentRepository parentStudentRepository,
         ParentRepository parentRepository,
         StudentRepository studentRepository,
@@ -37,27 +41,34 @@ public class ParentEmailService {
         this.userRepository = userRepository;
     }
 
-    public int emailParentsForStudents(
+    public int notifyParentsForStudents(
         Collection<Long> studentIds,
-        BiConsumer<User, Parent> emailSender) {
+        BiConsumer<User, Parent> notifier) {
         Map<Long, Parent> byUserId = resolveParentsForStudents(studentIds);
-        int emailed = 0;
+        int notified = 0;
         for (Parent parent : byUserId.values()) {
             User user = userRepository.findById(parent.getUserId()).orElse(null);
             if (user == null || !Boolean.TRUE.equals(user.getIsActive())) {
                 continue;
             }
-            emailSender.accept(user, parent);
-            emailed++;
+            if (user.getEmail() == null || user.getEmail().isBlank()) {
+                log.warn(
+                    "Skipping parent email notify: parentId={} userId={} has no email",
+                    parent.getId(),
+                    parent.getUserId());
+                continue;
+            }
+            notifier.accept(user, parent);
+            notified++;
         }
-        return emailed;
+        return notified;
     }
 
-    public int emailParentsForClass(Long classId, BiConsumer<User, Parent> emailSender) {
+    public int notifyParentsForClass(Long classId, BiConsumer<User, Parent> notifier) {
         Set<Long> studentIds = new HashSet<>();
         studentRepository.findByClassId(classId, Pageable.unpaged())
             .forEach(s -> studentIds.add(s.getId()));
-        return emailParentsForStudents(studentIds, emailSender);
+        return notifyParentsForStudents(studentIds, notifier);
     }
 
     public static String formatStudentName(Student student) {
@@ -68,13 +79,32 @@ public class ParentEmailService {
     }
 
     public List<String> childNamesForParent(Long parentId) {
+        return childNamesForParent(parentId, null);
+    }
+
+    public List<String> childNamesForParent(Long parentId, Collection<Long> restrictToStudentIds) {
+        Set<Long> restrict = restrictToStudentIds == null || restrictToStudentIds.isEmpty()
+            ? null
+            : new HashSet<>(restrictToStudentIds);
         return parentStudentRepository.findByParentId(parentId).stream()
             .map(ParentStudent::getStudentId)
+            .filter(studentId -> restrict == null || restrict.contains(studentId))
             .map(studentRepository::findById)
             .filter(java.util.Optional::isPresent)
             .map(opt -> formatStudentName(opt.get()))
             .distinct()
             .sorted()
+            .toList();
+    }
+
+    public List<Long> linkedStudentIdsForParent(Long parentId, Collection<Long> restrictToStudentIds) {
+        Set<Long> restrict = restrictToStudentIds == null || restrictToStudentIds.isEmpty()
+            ? null
+            : new HashSet<>(restrictToStudentIds);
+        return parentStudentRepository.findByParentId(parentId).stream()
+            .map(ParentStudent::getStudentId)
+            .filter(studentId -> restrict == null || restrict.contains(studentId))
+            .distinct()
             .toList();
     }
 

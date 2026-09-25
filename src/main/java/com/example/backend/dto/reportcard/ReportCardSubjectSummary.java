@@ -8,6 +8,7 @@ public record ReportCardSubjectSummary(
     String subjectName,
     BigDecimal subjectTotal,
     String letterGrade,
-    List<ReportCardSubjectGrade> breakdown
+    List<ReportCardSubjectGrade> breakdown,
+    String performanceBand
 ) {
 }

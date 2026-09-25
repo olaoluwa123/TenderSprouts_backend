@@ -11,6 +11,8 @@ public record CreateStudentRequest(
     LocalDate dateOfBirth,
     @NotBlank String admissionNumber,
     Gender gender,
-    @NotNull Long classId
+    @NotNull Long classId,
+    String height,
+    String weight
 ) {
 }

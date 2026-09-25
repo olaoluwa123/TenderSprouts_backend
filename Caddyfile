@@ -1,0 +1,42 @@
+{
+	email {$ACME_EMAIL:admin@tendersprouts.com.ng}
+}
+
+(app) {
+	encode gzip
+	request_body {
+		max_size 20MB
+	}
+
+	handle /api/* {
+		reverse_proxy backend:8080
+	}
+
+	handle /actuator/* {
+		reverse_proxy backend:8080
+	}
+
+	handle {
+		reverse_proxy frontend:80
+	}
+}
+
+# Send plain HTTP on the IP to the trusted HTTPS hostname
+http://{$SITE_HOST:68.169.55.92} {
+	redir https://{$SITE_HOST:68.169.55.92}.sslip.io{uri} permanent
+}
+
+# Public IP — Let's Encrypt only issues IP certs on the shortlived profile
+https://{$SITE_HOST:68.169.55.92} {
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+	import app
+}
+
+# Trusted hostname without custom DNS (resolves to the same IP)
+{$SITE_HOST:68.169.55.92}.sslip.io {
+	import app
+}

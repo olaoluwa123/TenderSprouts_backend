@@ -13,9 +13,11 @@ import com.example.backend.dto.student.OnboardStudentWithParentRequest;
 import com.example.backend.dto.student.OnboardStudentWithParentResponse;
 import com.example.backend.dto.student.StudentResponse;
 import com.example.backend.dto.student.UpdateStudentRequest;
+import com.example.backend.entity.ParentStudent;
 import com.example.backend.entity.Student;
 import com.example.backend.entity.StudentEnrollment;
 import com.example.backend.entity.AcademicSession;
+import com.example.backend.entity.User;
 import com.example.backend.entity.enums.EnrollmentStatus;
 import com.example.backend.exception.ConflictException;
 import com.example.backend.exception.ResourceNotFoundException;
@@ -31,6 +33,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,6 +49,7 @@ public class StudentService {
     private final ActiveSessionService activeSessionService;
     private final AuditService auditService;
     private final ParentService parentService;
+    private final AuthorizationService authorizationService;
 
     public StudentService(
         StudentRepository studentRepository,
@@ -55,7 +59,8 @@ public class StudentService {
         ParentStudentRepository parentStudentRepository,
         ActiveSessionService activeSessionService,
         AuditService auditService,
-        ParentService parentService) {
+        ParentService parentService,
+        AuthorizationService authorizationService) {
         this.studentRepository = studentRepository;
         this.studentEnrollmentRepository = studentEnrollmentRepository;
         this.schoolClassRepository = schoolClassRepository;
@@ -64,11 +69,30 @@ public class StudentService {
         this.activeSessionService = activeSessionService;
         this.auditService = auditService;
         this.parentService = parentService;
+        this.authorizationService = authorizationService;
     }
 
-    public Page<StudentResponse> list(Long classId, Long sessionId, String search, Pageable pageable) {
+    public Page<StudentResponse> list(
+        Long classId,
+        Long sessionId,
+        String search,
+        Pageable pageable,
+        SecurityUser actor) {
         Page<Student> page;
-        if (sessionId != null) {
+        boolean filteredByParent = actor != null && actor.getRole() == User.Role.PARENT;
+        boolean teacher = actor != null && actor.getRole() == User.Role.TEACHER;
+        if (filteredByParent) {
+            List<Long> childIds = actor.getProfileId() == null
+                ? List.of()
+                : parentStudentRepository.findByParentId(actor.getProfileId()).stream()
+                    .map(ParentStudent::getStudentId)
+                    .toList();
+            page = childIds.isEmpty()
+                ? new PageImpl<>(List.of(), pageable, 0)
+                : studentRepository.findByIdIn(childIds, pageable);
+        } else if (teacher) {
+            page = listForTeacher(actor, classId, sessionId, search, pageable);
+        } else if (sessionId != null) {
             page = studentRepository.findByActiveEnrollment(sessionId, classId, pageable);
         } else if (search != null && !search.isBlank()) {
             page = studentRepository.search(classId, search.trim(), pageable);
@@ -78,6 +102,35 @@ public class StudentService {
             page = studentRepository.findAll(pageable);
         }
         return mapWithParentLinks(page);
+    }
+
+    private Page<Student> listForTeacher(
+        SecurityUser actor,
+        Long classId,
+        Long sessionId,
+        String search,
+        Pageable pageable) {
+        if (classId != null) {
+            authorizationService.requireTeacherForClass(actor, classId);
+            if (sessionId != null) {
+                return studentRepository.findByActiveEnrollment(sessionId, classId, pageable);
+            }
+            if (search != null && !search.isBlank()) {
+                return studentRepository.search(classId, search.trim(), pageable);
+            }
+            return studentRepository.findByClassId(classId, pageable);
+        }
+        Set<Long> assigned = authorizationService.getAssignedClassIds(actor);
+        if (assigned.isEmpty()) {
+            return new PageImpl<>(List.of(), pageable, 0);
+        }
+        if (sessionId != null) {
+            return studentRepository.findByActiveEnrollmentInClasses(sessionId, assigned, pageable);
+        }
+        if (search != null && !search.isBlank()) {
+            return studentRepository.searchInClasses(assigned, search.trim(), pageable);
+        }
+        return studentRepository.findByClassIdIn(assigned, pageable);
     }
 
     public StudentResponse getById(Long id) {
@@ -108,6 +161,8 @@ public class StudentService {
         student.setAdmissionNumber(request.admissionNumber());
         student.setGender(request.gender());
         student.setClassId(request.classId());
+        student.setHeight(blankToNull(request.height()));
+        student.setWeight(blankToNull(request.weight()));
         student.setIsActive(true);
         Student saved = studentRepository.save(student);
 
@@ -132,7 +187,9 @@ public class StudentService {
                 request.dateOfBirth(),
                 request.admissionNumber(),
                 request.gender(),
-                request.classId()),
+                request.classId(),
+                request.height(),
+                request.weight()),
             actor);
         ParentResponse parent = parentService.onboardForStudent(
             student.id(),
@@ -174,6 +231,12 @@ public class StudentService {
         }
         if (request.medicalInformation() != null) {
             student.setMedicalInformation(request.medicalInformation());
+        }
+        if (request.height() != null) {
+            student.setHeight(blankToNull(request.height()));
+        }
+        if (request.weight() != null) {
+            student.setWeight(blankToNull(request.weight()));
         }
         Student saved = studentRepository.save(student);
         auditService.logAdminAction(actor, "UPDATE", "student", saved.getId(), null);
@@ -308,5 +371,13 @@ public class StudentService {
     private Student findStudent(Long id) {
         return studentRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Student not found"));
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

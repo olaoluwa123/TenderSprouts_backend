@@ -5,6 +5,7 @@ import com.example.backend.dto.teacher.TeacherProfileResponse;
 import com.example.backend.dto.teacher.TeacherProfileResponse.ClassItem;
 import com.example.backend.dto.teacher.TeacherProfileResponse.SubjectItem;
 import com.example.backend.dto.teacher.TeacherResponse;
+import com.example.backend.dto.teacher.TeacherResponse.ClassSummary;
 import com.example.backend.dto.teacher.TeacherSubjectResponse;
 import com.example.backend.dto.teacher.UpdateTeacherRequest;
 import com.example.backend.entity.SchoolClass;
@@ -227,8 +228,12 @@ public class TeacherService {
 
     private TeacherResponse toResponse(Teacher teacher, Map<Long, String> classNames) {
         User user = userRepository.findById(teacher.getUserId()).orElse(null);
-        List<TeacherClass> active = teacherClassRepository.findByTeacherIdAndIsActiveTrue(teacher.getId());
-        Long classId = active.isEmpty() ? null : active.get(0).getClassId();
+        List<ClassSummary> classes = teacherClassRepository.findByTeacherIdAndIsActiveTrue(teacher.getId()).stream()
+            .map(tc -> new ClassSummary(
+                tc.getClassId(),
+                classNames.getOrDefault(tc.getClassId(), "Class #" + tc.getClassId())))
+            .toList();
+        Long classId = classes.isEmpty() ? null : classes.get(0).classId();
         String className = classId != null
             ? classNames.getOrDefault(classId, "Class #" + classId)
             : null;
@@ -237,7 +242,8 @@ public class TeacherService {
             user != null ? user.getEmail() : null,
             user != null ? user.getIsActive() : null,
             classId,
-            className);
+            className,
+            classes);
     }
 
     private TeacherSubjectResponse toSubjectResponse(

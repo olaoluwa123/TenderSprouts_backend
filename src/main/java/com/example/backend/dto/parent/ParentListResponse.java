@@ -9,6 +9,7 @@ public record ParentListResponse(
     String email,
     String fullName,
     String phone,
+    String address,
     Boolean isActive,
     Boolean loginActive,
     List<LinkedStudentSummary> students
@@ -24,6 +25,7 @@ public record ParentListResponse(
             email,
             parent.getFullName(),
             parent.getPhone(),
+            parent.getAddress(),
             parent.getIsActive(),
             loginActive,
             students);

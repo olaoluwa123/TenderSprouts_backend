@@ -70,7 +70,9 @@ public class StudentCsvImportRowService {
                     dateOfBirth,
                     admissionNumber,
                     gender,
-                    classId),
+                    classId,
+                    blankToNull(row.get("height")),
+                    blankToNull(row.get("weight"))),
                 actor);
 
             ParentService.ParentOnboardResult parentResult = parentService.onboardOrLinkForStudent(
