@@ -219,7 +219,7 @@ public class TermResultService {
 
         List<AssessmentTypeLookup> weightedTypes = assessmentTypeLookupRepository
             .findByIsActiveTrueOrderBySortOrderAscCodeAsc().stream()
-            .filter(type -> type.getWeight() != null && type.getWeight().compareTo(BigDecimal.ZERO) > 0)
+            .filter(type -> type.getDefaultMaxScore() != null && type.getDefaultMaxScore().signum() > 0)
             .toList();
         Set<String> weightedTypeCodes = GradeScoringUtil.weightedTypeCodes(weightedTypes);
         List<Grade> grades = gradeRepository.findByClassIdAndTermId(request.classId(), request.termId());

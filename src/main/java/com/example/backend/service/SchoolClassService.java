@@ -64,6 +64,8 @@ public class SchoolClassService {
     private final AttendanceRepository attendanceRepository;
     private final TermResultRepository termResultRepository;
     private final ActiveTermService activeTermService;
+    private final AssessmentSheetService assessmentSheetService;
+    private final GradeService gradeService;
     private final AuditService auditService;
     private final AuthorizationService authorizationService;
 
@@ -78,6 +80,8 @@ public class SchoolClassService {
         AttendanceRepository attendanceRepository,
         TermResultRepository termResultRepository,
         ActiveTermService activeTermService,
+        AssessmentSheetService assessmentSheetService,
+        GradeService gradeService,
         AuditService auditService,
         AuthorizationService authorizationService) {
         this.schoolClassRepository = schoolClassRepository;
@@ -90,6 +94,8 @@ public class SchoolClassService {
         this.attendanceRepository = attendanceRepository;
         this.termResultRepository = termResultRepository;
         this.activeTermService = activeTermService;
+        this.assessmentSheetService = assessmentSheetService;
+        this.gradeService = gradeService;
         this.auditService = auditService;
         this.authorizationService = authorizationService;
     }
@@ -229,6 +235,7 @@ public class SchoolClassService {
             saved = classSubjectRepository.save(cs);
         }
         auditService.logAdminAction(actor, "ASSIGN", "class_subject", saved.getId(), null);
+        assessmentSheetService.addSubjectToUnpublishedCurrentSheets(classId, subject.getName());
         return ClassSubjectResponse.from(saved, subject.getName());
     }
 
@@ -239,6 +246,9 @@ public class SchoolClassService {
             .orElseThrow(() -> new ResourceNotFoundException("Class subject assignment not found"));
         existing.setIsActive(false);
         classSubjectRepository.save(existing);
+        subjectRepository.findById(subjectId).map(Subject::getName)
+            .ifPresent(name -> assessmentSheetService.removeSubjectFromUnpublishedCurrentSheets(classId, name));
+        gradeService.removeUnpublishedCurrentTermGrades(classId, subjectId);
         auditService.logAdminAction(actor, "UNASSIGN", "class_subject", existing.getId(),
             "classId=" + classId + ",subjectId=" + subjectId);
     }
@@ -279,6 +289,9 @@ public class SchoolClassService {
                     classSubjectRepository.save(cs);
                 }
                 assigned++;
+                subjectRepository.findById(subjectId)
+                    .map(Subject::getName)
+                    .ifPresent(name -> assessmentSheetService.addSubjectToUnpublishedCurrentSheets(classId, name));
             }
         }
 

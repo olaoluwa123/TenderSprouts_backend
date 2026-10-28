@@ -12,6 +12,7 @@ import com.example.backend.dto.teacher.TeacherTimetableSlotResponse;
 import com.example.backend.dto.teacher.UpdateTeacherRequest;
 import com.example.backend.dto.teacher.UpdateTeacherTimetableSlotRequest;
 import com.example.backend.security.SecurityUtils;
+import com.example.backend.service.AuthorizationService;
 import com.example.backend.service.TeacherAssignmentService;
 import com.example.backend.service.TeacherCsvImportService;
 import com.example.backend.service.TeacherService;
@@ -44,33 +45,38 @@ public class TeacherController {
     private final TeacherService teacherService;
     private final TeacherCsvImportService teacherCsvImportService;
     private final TeacherTimetableService teacherTimetableService;
+    private final AuthorizationService authorizationService;
 
     public TeacherController(
         TeacherAssignmentService teacherAssignmentService,
         TeacherService teacherService,
         TeacherCsvImportService teacherCsvImportService,
-        TeacherTimetableService teacherTimetableService) {
+        TeacherTimetableService teacherTimetableService,
+        AuthorizationService authorizationService) {
         this.teacherAssignmentService = teacherAssignmentService;
         this.teacherService = teacherService;
         this.teacherCsvImportService = teacherCsvImportService;
         this.teacherTimetableService = teacherTimetableService;
+        this.authorizationService = authorizationService;
     }
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'TEACHER')")
     public Page<TeacherResponse> list(Pageable pageable) {
-        return teacherService.list(pageable);
+        return teacherService.list(pageable, SecurityUtils.requireCurrentUser());
     }
 
     @GetMapping("/{teacherId}")
     @PreAuthorize("hasAnyRole('ADMIN', 'TEACHER')")
     public TeacherResponse getById(@PathVariable Long teacherId) {
+        authorizationService.requireSelfOrAdminTeacher(SecurityUtils.requireCurrentUser(), teacherId);
         return teacherService.getById(teacherId);
     }
 
     @GetMapping("/{teacherId}/profile")
     @PreAuthorize("hasAnyRole('ADMIN', 'TEACHER')")
     public TeacherProfileResponse getProfile(@PathVariable Long teacherId) {
+        authorizationService.requireSelfOrAdminTeacher(SecurityUtils.requireCurrentUser(), teacherId);
         return teacherService.getProfile(teacherId);
     }
 
@@ -85,6 +91,7 @@ public class TeacherController {
     @GetMapping("/{teacherId}/subjects")
     @PreAuthorize("hasAnyRole('ADMIN', 'TEACHER')")
     public List<TeacherSubjectResponse> listSubjects(@PathVariable Long teacherId) {
+        authorizationService.requireSelfOrAdminTeacher(SecurityUtils.requireCurrentUser(), teacherId);
         return teacherService.listSubjects(teacherId);
     }
 
@@ -163,6 +170,7 @@ public class TeacherController {
 
     @GetMapping("/{teacherId}/classes")
     public List<TeacherAssignmentResponse> listClasses(@PathVariable Long teacherId) {
+        authorizationService.requireSelfOrAdminTeacher(SecurityUtils.requireCurrentUser(), teacherId);
         return teacherAssignmentService.listClasses(teacherId);
     }
 

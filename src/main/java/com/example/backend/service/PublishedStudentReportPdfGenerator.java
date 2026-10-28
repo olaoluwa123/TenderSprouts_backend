@@ -82,7 +82,12 @@ public class PublishedStudentReportPdfGenerator {
     }
 
     public byte[] generatePreschool(StudentPreschoolReportResponse report) {
-        return build("PRESCHOOL REPORT", report.termName(), report.sessionName(), (document) -> {
+        int month = report.monthNumber() == null ? 0 : report.monthNumber();
+        String period = month > 0 ? "Month " + month : "End of term";
+        String termHeading = report.termName() == null || report.termName().isBlank()
+            ? period
+            : report.termName() + " · " + period;
+        return build("PRESCHOOL REPORT", termHeading, report.sessionName(), (document) -> {
             document.add(pupilTable(
                 report.studentName(),
                 report.admissionNumber(),

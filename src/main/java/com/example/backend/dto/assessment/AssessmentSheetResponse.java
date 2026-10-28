@@ -37,7 +37,8 @@ public record AssessmentSheetResponse(
         Long studentId,
         String studentName,
         String admissionNumber,
-        Map<String, Map<String, CellValue>> scores
+        Map<String, Map<String, CellValue>> scores,
+        LocalDateTime publishedAt
     ) {
     }
 

@@ -93,6 +93,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/calendar/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.GET, "/api/announcements/inbox").hasAnyRole("ADMIN", "TEACHER", "PARENT")
                 .requestMatchers(HttpMethod.GET, "/api/announcements/mine").hasAnyRole("ADMIN", "TEACHER")
+                .requestMatchers(HttpMethod.POST, "/api/announcements/backfill-emails").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.POST, "/api/announcements").hasAnyRole("ADMIN", "TEACHER")
                 .requestMatchers(HttpMethod.PATCH, "/api/announcements/*").hasAnyRole("ADMIN", "TEACHER")
                 .requestMatchers(HttpMethod.DELETE, "/api/announcements/*").hasAnyRole("ADMIN", "TEACHER")

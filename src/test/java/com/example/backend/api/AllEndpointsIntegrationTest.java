@@ -308,7 +308,7 @@ class AllEndpointsIntegrationTest {
                 .header(HttpHeaders.AUTHORIZATION, auth)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"code":"TESTFIELD","name":"Test Field","defaultMaxScore":10,"weight":0}
+                    {"name":"Test Field","defaultMaxScore":10}
                     """))
             .andExpect(status().isCreated())
             .andReturn();
@@ -318,7 +318,7 @@ class AllEndpointsIntegrationTest {
                 .header(HttpHeaders.AUTHORIZATION, auth)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"name":"Test Field","defaultMaxScore":10,"weight":0,"active":false}
+                    {"name":"Test Field","defaultMaxScore":10,"active":false}
                     """))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.active").value(false));

@@ -161,7 +161,17 @@ public class StudentCsvImportService {
                 continue;
             }
 
-            ImportCsvRowResult result = rowService.processRow(rowNumber, row, actor);
+            ImportCsvRowResult result;
+            try {
+                result = rowService.processRow(rowNumber, row, actor);
+            } catch (RuntimeException ex) {
+                result = new ImportCsvRowResult(
+                    rowNumber,
+                    "FAILED",
+                    ex.getMessage() == null ? "Import row failed" : ex.getMessage(),
+                    null,
+                    null);
+            }
             results.add(result);
             if ("IMPORTED".equals(result.status())) {
                 successCount++;

@@ -15,12 +15,15 @@ public class EmailPublisher {
 
     private final ObjectProvider<RabbitTemplate> rabbitTemplateProvider;
     private final SmtpEmailSender smtpEmailSender;
+    private final EmailOutboxService emailOutboxService;
 
     public EmailPublisher(
         ObjectProvider<RabbitTemplate> rabbitTemplateProvider,
-        SmtpEmailSender smtpEmailSender) {
+        SmtpEmailSender smtpEmailSender,
+        EmailOutboxService emailOutboxService) {
         this.rabbitTemplateProvider = rabbitTemplateProvider;
         this.smtpEmailSender = smtpEmailSender;
+        this.emailOutboxService = emailOutboxService;
     }
 
     public void publish(EmailJob job) {
@@ -44,7 +47,10 @@ public class EmailPublisher {
                 "RabbitTemplate unavailable; sending email directly after commit to={} subject={}",
                 job.to(),
                 job.subject());
-            smtpEmailSender.send(job);
+            boolean sent = smtpEmailSender.send(job);
+            if (!sent) {
+                emailOutboxService.enqueueFailed(job, "SMTP send failed (direct, no RabbitMQ)");
+            }
             return;
         }
         rabbitTemplate.convertAndSend(
@@ -56,11 +62,12 @@ public class EmailPublisher {
     public void publishRetry(EmailJob job) {
         RabbitTemplate rabbitTemplate = rabbitTemplateProvider.getIfAvailable();
         if (rabbitTemplate == null) {
-            log.error(
-                "Cannot schedule email retry without RabbitMQ: to={} subject={} attempt={}",
+            log.warn(
+                "Cannot schedule Rabbit retry; persisting to email outbox: to={} subject={} attempt={}",
                 job.to(),
                 job.subject(),
                 job.attempt());
+            emailOutboxService.enqueueFailed(job, "Retry requested without RabbitMQ");
             return;
         }
         rabbitTemplate.convertAndSend(
@@ -73,10 +80,18 @@ public class EmailPublisher {
         RabbitTemplate rabbitTemplate = rabbitTemplateProvider.getIfAvailable();
         if (rabbitTemplate == null) {
             log.error(
-                "Cannot dead-letter email without RabbitMQ: to={} subject={} attempt={}",
+                "Cannot dead-letter email without RabbitMQ; marking outbox DEAD: to={} subject={} attempt={}",
                 job.to(),
                 job.subject(),
                 job.attempt());
+            // Force dead by using attempt at/above max
+            EmailJob dead = new EmailJob(
+                job.to(),
+                job.subject(),
+                job.body(),
+                EmailJob.MAX_RETRY_ATTEMPTS,
+                job.attachments());
+            emailOutboxService.enqueueFailed(dead, "Moved to DLQ without RabbitMQ");
             return;
         }
         rabbitTemplate.convertAndSend(

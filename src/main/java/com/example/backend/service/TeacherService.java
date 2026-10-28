@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -69,8 +70,15 @@ public class TeacherService {
         this.auditService = auditService;
     }
 
-    public Page<TeacherResponse> list(Pageable pageable) {
+    public Page<TeacherResponse> list(Pageable pageable, SecurityUser actor) {
         Map<Long, String> classNames = classNameMap();
+        if (actor != null && actor.getRole() == User.Role.TEACHER) {
+            if (actor.getProfileId() == null) {
+                return Page.empty(pageable);
+            }
+            Teacher self = findTeacher(actor.getProfileId());
+            return new PageImpl<>(List.of(toResponse(self, classNames)), pageable, 1);
+        }
         return teacherRepository.findAll(pageable).map(teacher -> toResponse(teacher, classNames));
     }
 

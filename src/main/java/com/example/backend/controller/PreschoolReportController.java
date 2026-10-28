@@ -27,8 +27,11 @@ public class PreschoolReportController {
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN','TEACHER')")
-    public PreschoolReportResponse get(@RequestParam Long classId, @RequestParam Long termId) {
-        return preschoolReportService.getSheet(classId, termId, SecurityUtils.requireCurrentUser());
+    public PreschoolReportResponse get(
+        @RequestParam Long classId,
+        @RequestParam Long termId,
+        @RequestParam(required = false) Integer monthNumber) {
+        return preschoolReportService.getSheet(classId, termId, monthNumber, SecurityUtils.requireCurrentUser());
     }
 
     @PutMapping

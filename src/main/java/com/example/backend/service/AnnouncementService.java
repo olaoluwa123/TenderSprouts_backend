@@ -1,14 +1,18 @@
 package com.example.backend.service;
 
+import com.example.backend.config.AppFrontendProperties;
+import com.example.backend.dto.announcement.AnnouncementEmailBackfillResponse;
 import com.example.backend.dto.announcement.AnnouncementRecipientResponse;
 import com.example.backend.dto.announcement.AnnouncementResponse;
 import com.example.backend.dto.announcement.CreateAnnouncementRequest;
 import com.example.backend.dto.announcement.UpdateAnnouncementRequest;
 import com.example.backend.entity.Announcement;
 import com.example.backend.entity.AnnouncementRecipient;
+import com.example.backend.entity.Parent;
 import com.example.backend.entity.ParentStudent;
 import com.example.backend.entity.SchoolClass;
 import com.example.backend.entity.Student;
+import com.example.backend.entity.Teacher;
 import com.example.backend.entity.User;
 import com.example.backend.entity.enums.AnnouncementAudience;
 import com.example.backend.entity.enums.AnnouncementRecipientType;
@@ -16,9 +20,12 @@ import com.example.backend.exception.ConflictException;
 import com.example.backend.exception.ForbiddenException;
 import com.example.backend.exception.ResourceNotFoundException;
 import com.example.backend.repository.AnnouncementRepository;
+import com.example.backend.repository.ParentRepository;
 import com.example.backend.repository.ParentStudentRepository;
 import com.example.backend.repository.SchoolClassRepository;
 import com.example.backend.repository.StudentRepository;
+import com.example.backend.repository.TeacherRepository;
+import com.example.backend.repository.UserRepository;
 import com.example.backend.security.SecurityUser;
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -28,16 +35,26 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AnnouncementService {
 
+    private static final Logger log = LoggerFactory.getLogger(AnnouncementService.class);
+
     private final AnnouncementRepository announcementRepository;
     private final SchoolClassRepository schoolClassRepository;
     private final ParentStudentRepository parentStudentRepository;
     private final StudentRepository studentRepository;
+    private final ParentRepository parentRepository;
+    private final TeacherRepository teacherRepository;
+    private final UserRepository userRepository;
+    private final ParentNotifyService parentNotifyService;
+    private final EmailService emailService;
+    private final AppFrontendProperties frontendProperties;
     private final AuthorizationService authorizationService;
     private final AuditService auditService;
 
@@ -46,12 +63,24 @@ public class AnnouncementService {
         SchoolClassRepository schoolClassRepository,
         ParentStudentRepository parentStudentRepository,
         StudentRepository studentRepository,
+        ParentRepository parentRepository,
+        TeacherRepository teacherRepository,
+        UserRepository userRepository,
+        ParentNotifyService parentNotifyService,
+        EmailService emailService,
+        AppFrontendProperties frontendProperties,
         AuthorizationService authorizationService,
         AuditService auditService) {
         this.announcementRepository = announcementRepository;
         this.schoolClassRepository = schoolClassRepository;
         this.parentStudentRepository = parentStudentRepository;
         this.studentRepository = studentRepository;
+        this.parentRepository = parentRepository;
+        this.teacherRepository = teacherRepository;
+        this.userRepository = userRepository;
+        this.parentNotifyService = parentNotifyService;
+        this.emailService = emailService;
+        this.frontendProperties = frontendProperties;
         this.authorizationService = authorizationService;
         this.auditService = auditService;
     }
@@ -77,6 +106,42 @@ public class AnnouncementService {
         return toResponse(find(id), classNameMap());
     }
 
+    /**
+     * One-shot: email every non-expired announcement to its audience using the "new"
+     * template. Safe to call for catch-up after enabling announcement mail; calling again
+     * will send duplicate emails.
+     */
+    @Transactional
+    public AnnouncementEmailBackfillResponse backfillEmails(SecurityUser actor) {
+        if (actor.getRole() != User.Role.ADMIN) {
+            throw new ForbiddenException("Only admins can backfill announcement emails");
+        }
+        List<Announcement> all = announcementRepository.findAllByOrderByCreatedAtDesc();
+        LocalDateTime now = LocalDateTime.now();
+        int notified = 0;
+        int skippedExpired = 0;
+        for (Announcement announcement : all) {
+            if (announcement.getExpiresAt() != null && announcement.getExpiresAt().isBefore(now)) {
+                skippedExpired++;
+                continue;
+            }
+            notifyAudience(announcement, false);
+            notified++;
+        }
+        auditService.logAdminAction(
+            actor,
+            "BACKFILL_EMAILS",
+            "announcement",
+            0L,
+            "notified=" + notified + ",skippedExpired=" + skippedExpired);
+        log.info(
+            "Announcement email backfill complete: total={} notified={} skippedExpired={}",
+            all.size(),
+            notified,
+            skippedExpired);
+        return new AnnouncementEmailBackfillResponse(all.size(), notified, skippedExpired);
+    }
+
     @Transactional
     public AnnouncementResponse create(CreateAnnouncementRequest request, SecurityUser actor) {
         enforceTeacherCreateAudience(actor, request.audience(), request.classId(), request.recipientIds());
@@ -93,6 +158,7 @@ public class AnnouncementService {
         applyRecipients(announcement, request.audience(), request.recipientIds());
         Announcement saved = announcementRepository.save(announcement);
         auditService.logAdminAction(actor, "CREATE", "announcement", saved.getId(), saved.getTitle());
+        notifyAudience(saved, false);
         return toResponse(saved, classNameMap());
     }
 
@@ -138,6 +204,7 @@ public class AnnouncementService {
         }
         Announcement saved = announcementRepository.save(announcement);
         auditService.logAdminAction(actor, "UPDATE", "announcement", saved.getId(), saved.getTitle());
+        notifyAudience(saved, true);
         return toResponse(saved, classNameMap());
     }
 
@@ -164,6 +231,163 @@ public class AnnouncementService {
             case PARENT -> parentInbox(actor.getProfileId());
         };
         return items.stream().map(a -> toResponse(a, classNames)).toList();
+    }
+
+    private void notifyAudience(Announcement announcement, boolean updated) {
+        try {
+            AnnouncementAudience audience = announcement.getAudience();
+            if (audience == null) {
+                return;
+            }
+            switch (audience) {
+                case ALL_PARENTS -> notifyAllParents(announcement, updated);
+                case CLASS -> {
+                    if (announcement.getClassId() != null) {
+                        String portalUrl = parentAnnouncementsUrl();
+                        parentNotifyService.notifyParentsForClass(
+                            announcement.getClassId(),
+                            (user, parent) -> sendParentAnnouncement(user, parent, announcement, portalUrl, updated));
+                    }
+                }
+                case SPECIFIC_PARENTS -> notifySpecificParents(announcement, updated);
+                case SPECIFIC_PUPILS -> {
+                    List<Long> pupilIds = announcement.getRecipients().stream()
+                        .filter(r -> r.getRecipientType() == AnnouncementRecipientType.PUPIL)
+                        .map(AnnouncementRecipient::getRecipientId)
+                        .filter(Objects::nonNull)
+                        .distinct()
+                        .toList();
+                    if (!pupilIds.isEmpty()) {
+                        String portalUrl = parentAnnouncementsUrl();
+                        parentNotifyService.notifyParentsForStudents(
+                            pupilIds,
+                            (user, parent) -> sendParentAnnouncement(user, parent, announcement, portalUrl, updated));
+                    }
+                }
+                case TEACHERS -> notifyAllTeachers(announcement, updated);
+            }
+        } catch (RuntimeException ex) {
+            log.warn(
+                "Announcement email notify failed: announcementId={} audience={} updated={} message={}",
+                announcement.getId(),
+                announcement.getAudience(),
+                updated,
+                ex.getMessage());
+        }
+    }
+
+    private void notifyAllParents(Announcement announcement, boolean updated) {
+        String portalUrl = parentAnnouncementsUrl();
+        for (Parent parent : parentRepository.findAll()) {
+            if (!Boolean.TRUE.equals(parent.getIsActive())) {
+                continue;
+            }
+            User user = userRepository.findById(parent.getUserId()).orElse(null);
+            if (!isActiveEmailUser(user)) {
+                continue;
+            }
+            sendParentAnnouncement(user, parent, announcement, portalUrl, updated);
+        }
+    }
+
+    private void notifySpecificParents(Announcement announcement, boolean updated) {
+        String portalUrl = parentAnnouncementsUrl();
+        List<Long> parentIds = announcement.getRecipients().stream()
+            .filter(r -> r.getRecipientType() == AnnouncementRecipientType.PARENT)
+            .map(AnnouncementRecipient::getRecipientId)
+            .filter(Objects::nonNull)
+            .distinct()
+            .toList();
+        for (Long parentId : parentIds) {
+            Parent parent = parentRepository.findById(parentId).orElse(null);
+            if (parent == null || !Boolean.TRUE.equals(parent.getIsActive())) {
+                continue;
+            }
+            User user = userRepository.findById(parent.getUserId()).orElse(null);
+            if (!isActiveEmailUser(user)) {
+                continue;
+            }
+            sendParentAnnouncement(user, parent, announcement, portalUrl, updated);
+        }
+    }
+
+    private void notifyAllTeachers(Announcement announcement, boolean updated) {
+        String portalUrl = teacherAnnouncementsUrl();
+        for (Teacher teacher : teacherRepository.findAll()) {
+            if (!Boolean.TRUE.equals(teacher.getIsActive())) {
+                continue;
+            }
+            User user = userRepository.findById(teacher.getUserId()).orElse(null);
+            if (!isActiveEmailUser(user) || user.getRole() != User.Role.TEACHER) {
+                continue;
+            }
+            sendAnnouncementEmail(
+                user.getEmail(),
+                teacher.getFullName(),
+                announcement,
+                portalUrl,
+                updated);
+        }
+    }
+
+    private void sendParentAnnouncement(
+        User user,
+        Parent parent,
+        Announcement announcement,
+        String portalUrl,
+        boolean updated) {
+        sendAnnouncementEmail(
+            user.getEmail(),
+            parent.getFullName(),
+            announcement,
+            portalUrl,
+            updated);
+    }
+
+    private void sendAnnouncementEmail(
+        String email,
+        String name,
+        Announcement announcement,
+        String portalUrl,
+        boolean updated) {
+        if (updated) {
+            emailService.sendAnnouncementUpdated(
+                email,
+                name,
+                announcement.getTitle(),
+                announcement.getContent(),
+                portalUrl);
+        } else {
+            emailService.sendAnnouncementPublished(
+                email,
+                name,
+                announcement.getTitle(),
+                announcement.getContent(),
+                portalUrl);
+        }
+    }
+
+    private static boolean isActiveEmailUser(User user) {
+        return user != null
+            && Boolean.TRUE.equals(user.getIsActive())
+            && user.getEmail() != null
+            && !user.getEmail().isBlank();
+    }
+
+    private String parentAnnouncementsUrl() {
+        return portalOrigin() + "/parent/announcements";
+    }
+
+    private String teacherAnnouncementsUrl() {
+        return portalOrigin() + "/teacher/announcements";
+    }
+
+    private String portalOrigin() {
+        String origin = frontendProperties.getOrigin();
+        if (origin == null || origin.isBlank()) {
+            return "http://localhost:3000";
+        }
+        return origin.replaceAll("/$", "");
     }
 
     private List<Announcement> parentInbox(Long parentId) {

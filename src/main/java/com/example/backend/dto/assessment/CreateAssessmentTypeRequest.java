@@ -7,8 +7,8 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 
+/** Create payload: only name + max score are required. Code is optional (auto-generated from name). */
 public record CreateAssessmentTypeRequest(
-    @NotBlank
     @Size(max = 20)
     @Pattern(regexp = "^[A-Z][A-Z0-9_]*$", message = "Code must be uppercase letters, numbers, or underscores")
     String code,
@@ -17,8 +17,6 @@ public record CreateAssessmentTypeRequest(
     String name,
     @NotNull
     @DecimalMin(value = "0.01", message = "Max score must be greater than zero")
-    BigDecimal defaultMaxScore,
-    @DecimalMin(value = "0", message = "Weight cannot be negative")
-    BigDecimal weight
+    BigDecimal defaultMaxScore
 ) {
 }

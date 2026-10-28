@@ -11,6 +11,7 @@ public record PublishedStudentReportItem(
     String className,
     Integer weekNumber,
     String periodType,
-    LocalDateTime publishedAt
+    LocalDateTime publishedAt,
+    Integer monthNumber
 ) {
 }

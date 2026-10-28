@@ -11,18 +11,25 @@ import com.example.backend.dto.parent.UpdateParentMeRequest;
 import com.example.backend.dto.student.StudentResponse;
 import com.example.backend.entity.Parent;
 import com.example.backend.entity.ParentStudent;
+import com.example.backend.entity.SchoolClass;
+import com.example.backend.entity.Student;
 import com.example.backend.entity.User;
+import com.example.backend.entity.enums.ClassGroup;
 import com.example.backend.exception.ConflictException;
 import com.example.backend.exception.ForbiddenException;
 import com.example.backend.exception.ResourceNotFoundException;
 import com.example.backend.repository.ParentRepository;
 import com.example.backend.repository.ParentStudentRepository;
+import com.example.backend.repository.SchoolClassRepository;
 import com.example.backend.repository.StudentRepository;
 import com.example.backend.repository.UserRepository;
 import com.example.backend.security.SecurityUser;
 import com.example.backend.util.TemporaryPasswordGenerator;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -36,6 +43,7 @@ public class ParentService {
     private final ParentStudentRepository parentStudentRepository;
     private final UserRepository userRepository;
     private final StudentRepository studentRepository;
+    private final SchoolClassRepository schoolClassRepository;
     private final PasswordEncoder passwordEncoder;
     private final PortalUserOnboardingService portalUserOnboardingService;
     private final AuditService auditService;
@@ -46,6 +54,7 @@ public class ParentService {
         ParentStudentRepository parentStudentRepository,
         UserRepository userRepository,
         StudentRepository studentRepository,
+        SchoolClassRepository schoolClassRepository,
         PasswordEncoder passwordEncoder,
         PortalUserOnboardingService portalUserOnboardingService,
         AuditService auditService,
@@ -54,6 +63,7 @@ public class ParentService {
         this.parentStudentRepository = parentStudentRepository;
         this.userRepository = userRepository;
         this.studentRepository = studentRepository;
+        this.schoolClassRepository = schoolClassRepository;
         this.passwordEncoder = passwordEncoder;
         this.portalUserOnboardingService = portalUserOnboardingService;
         this.auditService = auditService;
@@ -67,11 +77,22 @@ public class ParentService {
         Parent parent = parentRepository.findById(actor.getProfileId())
             .orElseThrow(() -> new ResourceNotFoundException("Parent not found"));
         User user = userRepository.findById(parent.getUserId()).orElseThrow();
-        List<StudentResponse> children = parentStudentRepository.findByParentId(parent.getId()).stream()
+        List<Student> students = parentStudentRepository.findByParentId(parent.getId()).stream()
             .map(ParentStudent::getStudentId)
             .map(studentRepository::findById)
-            .filter(java.util.Optional::isPresent)
-            .map(opt -> StudentResponse.from(opt.get()))
+            .flatMap(java.util.Optional::stream)
+            .toList();
+        Set<Long> classIds = students.stream()
+            .map(Student::getClassId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+        Map<Long, ClassGroup> classGroups = schoolClassRepository.findAllById(classIds).stream()
+            .collect(Collectors.toMap(SchoolClass::getId, SchoolClass::getClassGroup, (left, right) -> left));
+        List<StudentResponse> children = students.stream()
+            .map(student -> StudentResponse.from(
+                student,
+                false,
+                student.getClassId() == null ? null : classGroups.get(student.getClassId())))
             .toList();
         return new ParentMeResponse(
             parent.getId(),

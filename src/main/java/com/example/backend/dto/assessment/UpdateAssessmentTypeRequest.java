@@ -11,8 +11,6 @@ public record UpdateAssessmentTypeRequest(
     String name,
     @DecimalMin(value = "0.01", message = "Max score must be greater than zero")
     BigDecimal defaultMaxScore,
-    @DecimalMin(value = "0", message = "Weight cannot be negative")
-    BigDecimal weight,
     @JsonProperty("active")
     @JsonAlias("isActive")
     Boolean active

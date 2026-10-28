@@ -17,14 +17,12 @@ public final class GradeScoringUtil {
 
     public static Set<String> weightedTypeCodes(List<AssessmentTypeLookup> types) {
         return types.stream()
-            .filter(type -> type.getWeight() != null && type.getWeight().compareTo(BigDecimal.ZERO) > 0)
             .map(AssessmentTypeLookup::getCode)
             .collect(Collectors.toSet());
     }
 
     public static BigDecimal sumMaxScores(List<AssessmentTypeLookup> types) {
         return types.stream()
-            .filter(type -> type.getWeight() != null && type.getWeight().compareTo(BigDecimal.ZERO) > 0)
             .map(AssessmentTypeLookup::getDefaultMaxScore)
             .filter(max -> max != null)
             .reduce(BigDecimal.ZERO, BigDecimal::add);

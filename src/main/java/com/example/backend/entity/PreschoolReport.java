@@ -29,6 +29,9 @@ public class PreschoolReport extends AuditableEntity {
     @Column(name = "teacher_id", nullable = false)
     private Long teacherId;
 
+    @Column(name = "month_number", nullable = false)
+    private Integer monthNumber = 0;
+
     @Column(name = "published_at")
     private LocalDateTime publishedAt;
 
@@ -70,6 +73,14 @@ public class PreschoolReport extends AuditableEntity {
 
     public void setTeacherId(Long teacherId) {
         this.teacherId = teacherId;
+    }
+
+    public Integer getMonthNumber() {
+        return monthNumber;
+    }
+
+    public void setMonthNumber(Integer monthNumber) {
+        this.monthNumber = monthNumber;
     }
 
     public LocalDateTime getPublishedAt() {

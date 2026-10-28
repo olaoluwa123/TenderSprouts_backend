@@ -7,6 +7,7 @@ public record PublishAssessmentSheetRequest(
     @NotNull AssessmentSheetType type,
     @NotNull Long classId,
     @NotNull Long termId,
-    Integer weekNumber
+    Integer weekNumber,
+    Long studentId
 ) {
 }

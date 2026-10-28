@@ -7,7 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface PreschoolReportRepository extends JpaRepository<PreschoolReport, Long> {
 
-    Optional<PreschoolReport> findByClassIdAndTermId(Long classId, Long termId);
+    Optional<PreschoolReport> findByClassIdAndTermIdAndMonthNumber(Long classId, Long termId, Integer monthNumber);
 
     List<PreschoolReport> findByClassIdAndPublishedAtIsNotNull(Long classId);
 

@@ -56,6 +56,8 @@ class SchoolClassServiceAuthTest {
             Mockito.mock(AttendanceRepository.class),
             Mockito.mock(TermResultRepository.class),
             new ActiveTermService(null, null),
+            null,
+            null,
             new AuditService(null),
             authorizationService);
     }

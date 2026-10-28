@@ -141,6 +141,7 @@ public class AuthService {
         user.setMustChangePassword(false);
         user.setAccessTokenVersion(user.getAccessTokenVersion() + 1);
         userRepository.save(user);
+        revokeRefreshTokens(user.getId());
         SecurityUser securityUser = userDetailsService.loadSecurityUserById(user.getId());
         return issueTokens(securityUser);
     }
@@ -162,6 +163,15 @@ public class AuthService {
             user.getRole(),
             user.getProfileId(),
             Boolean.TRUE.equals(userEntity.getMustChangePassword()));
+    }
+
+    private void revokeRefreshTokens(Long userId) {
+        LocalDateTime now = LocalDateTime.now();
+        java.util.List<RefreshToken> active = refreshTokenRepository.findByUserIdAndRevokedAtIsNull(userId);
+        for (RefreshToken refresh : active) {
+            refresh.setRevokedAt(now);
+        }
+        refreshTokenRepository.saveAll(active);
     }
 
     private void validateProfileForRole(SecurityUser user) {

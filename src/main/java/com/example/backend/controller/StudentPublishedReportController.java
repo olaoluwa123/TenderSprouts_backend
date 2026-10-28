@@ -86,18 +86,24 @@ public class StudentPublishedReportController {
     @GetMapping("/preschool")
     public StudentPreschoolReportResponse preschool(
         @PathVariable Long studentId,
-        @RequestParam Long termId) {
+        @RequestParam Long termId,
+        @RequestParam(required = false) Integer monthNumber) {
         return parentPublishedReportService.getPreschoolReport(
-            studentId, termId, SecurityUtils.requireCurrentUser());
+            studentId, termId, monthNumber, SecurityUtils.requireCurrentUser());
     }
 
     @GetMapping("/preschool/pdf")
     public ResponseEntity<byte[]> preschoolPdf(
         @PathVariable Long studentId,
-        @RequestParam Long termId) {
+        @RequestParam Long termId,
+        @RequestParam(required = false) Integer monthNumber) {
         byte[] pdf = parentPublishedReportService.preschoolPdf(
-            studentId, termId, SecurityUtils.requireCurrentUser());
-        return pdfResponse("preschool-" + studentId + "-term-" + termId + ".pdf", pdf);
+            studentId, termId, monthNumber, SecurityUtils.requireCurrentUser());
+        int month = monthNumber == null ? 0 : monthNumber;
+        String filename = month > 0
+            ? "preschool-" + studentId + "-term-" + termId + "-month-" + month + ".pdf"
+            : "preschool-" + studentId + "-term-" + termId + ".pdf";
+        return pdfResponse(filename, pdf);
     }
 
     private static ResponseEntity<byte[]> pdfResponse(String filename, byte[] pdf) {

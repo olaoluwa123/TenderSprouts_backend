@@ -14,6 +14,7 @@ import com.example.backend.entity.SchoolClass;
 import com.example.backend.entity.Student;
 import com.example.backend.entity.Subject;
 import com.example.backend.entity.Term;
+import com.example.backend.entity.TermResult;
 import com.example.backend.entity.User;
 import com.example.backend.entity.enums.ClassGroup;
 import com.example.backend.exception.ConflictException;
@@ -35,6 +36,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
@@ -103,10 +105,9 @@ public class GradeService {
         if (!termRepository.existsById(request.termId())) {
             throw new ResourceNotFoundException("Term not found");
         }
+        requireStudentInAssignedClass(actor, request.studentId(), request.classId());
         requireTermInActiveSession(request.termId());
         activeTermService.requireMatchesActiveTermForWrite(request.termId(), actor);
-        authorizationService.requireTeacherForClass(actor, request.classId());
-        requirePrimaryClassForTeacher(actor, request.classId());
         AssessmentTypeLookup assessmentType = assessmentTypeService.requireActiveType(request.assessmentType());
         String typeCode = assessmentType.getCode();
         if (gradeRepository.findByStudentIdAndSubjectIdAndTermIdAndAssessmentType(
@@ -229,10 +230,9 @@ public class GradeService {
         if (!termRepository.existsById(request.termId())) {
             throw new ResourceNotFoundException("Term not found");
         }
+        requireStudentInAssignedClass(actor, studentId, request.classId());
         requireTermInActiveSession(request.termId());
         activeTermService.requireMatchesActiveTermForWrite(request.termId(), actor);
-        authorizationService.requireTeacherForClass(actor, request.classId());
-        requirePrimaryClassForTeacher(actor, request.classId());
 
         Long teacherId = resolveTeacherId(actor);
         Long sessionId = activeSessionService.requireActiveSessionId();
@@ -243,10 +243,6 @@ public class GradeService {
             }
             AssessmentTypeLookup assessmentType = assessmentTypeService.requireActiveType(entry.assessmentType());
             String typeCode = assessmentType.getCode();
-            if (assessmentType.getWeight() == null
-                || assessmentType.getWeight().compareTo(BigDecimal.ZERO) <= 0) {
-                throw new ConflictException("Assessment type is not used for grading: " + typeCode);
-            }
             BigDecimal maxScore = assessmentType.getDefaultMaxScore();
             if (entry.score().compareTo(maxScore) > 0) {
                 throw new ConflictException("Score cannot exceed max score of " + maxScore);
@@ -314,12 +310,42 @@ public class GradeService {
             .toList();
     }
 
+    @Transactional
+    public void removeUnpublishedCurrentTermGrades(Long classId, Long subjectId) {
+        Long termId;
+        try {
+            termId = activeTermService.requireActiveTermId();
+        } catch (RuntimeException ex) {
+            return;
+        }
+        Set<Long> publishedStudentIds = termResultRepository
+            .findByClassIdAndTermIdAndPublishedAtIsNotNull(classId, termId).stream()
+            .map(TermResult::getStudentId)
+            .collect(Collectors.toSet());
+        List<Grade> toDelete = gradeRepository.findByClassIdAndTermIdAndSubjectId(classId, termId, subjectId).stream()
+            .filter(grade -> !publishedStudentIds.contains(grade.getStudentId()))
+            .toList();
+        if (!toDelete.isEmpty()) {
+            gradeRepository.deleteAll(toDelete);
+        }
+    }
+
     public List<GradeResponse> listForClass(Long classId, Long termId, Long subjectId, SecurityUser actor) {
         authorizationService.requireTeacherForClass(actor, classId);
         requirePrimaryClassForTeacher(actor, classId);
         return gradeRepository.findByClassIdAndTermIdAndSubjectId(classId, termId, subjectId).stream()
             .map(GradeResponse::from)
             .toList();
+    }
+
+    private void requireStudentInAssignedClass(SecurityUser actor, Long studentId, Long classId) {
+        Student student = studentRepository.findById(studentId)
+            .orElseThrow(() -> new ResourceNotFoundException("Student not found"));
+        if (!Objects.equals(student.getClassId(), classId)) {
+            throw new ForbiddenException("Student is not in this class");
+        }
+        authorizationService.requireTeacherForClass(actor, classId);
+        requirePrimaryClassForTeacher(actor, classId);
     }
 
     private void requirePrimaryClassForTeacher(SecurityUser actor, Long classId) {

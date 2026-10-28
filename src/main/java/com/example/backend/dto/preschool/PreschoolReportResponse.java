@@ -8,6 +8,7 @@ public record PreschoolReportResponse(
     Long reportId,
     Long classId,
     Long termId,
+    Integer monthNumber,
     LocalDateTime publishedAt,
     List<Subject> subjects,
     List<Pupil> pupils

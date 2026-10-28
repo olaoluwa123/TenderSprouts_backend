@@ -30,6 +30,7 @@ import com.example.backend.repository.SubjectRepository;
 import com.example.backend.repository.TermRepository;
 import com.example.backend.repository.TermResultRepository;
 import com.example.backend.repository.UserRepository;
+import com.example.backend.security.SecurityUser;
 import com.example.backend.util.LetterGradeUtil;
 import com.example.backend.util.StudentAgeUtil;
 import java.util.ArrayList;
@@ -84,7 +85,7 @@ public class StudentProfileService {
         this.activeSessionService = activeSessionService;
     }
 
-    public StudentProfileResponse getProfile(Long studentId) {
+    public StudentProfileResponse getProfile(Long studentId, SecurityUser actor) {
         Student student = studentRepository.findById(studentId)
             .orElseThrow(() -> new ResourceNotFoundException("Student not found"));
 
@@ -138,7 +139,7 @@ public class StudentProfileService {
             student.getAddress(),
             student.getMedicalInformation(),
             student.getIsActive(),
-            buildResults(studentId, classNames, sessionNames, termNames),
+            buildResults(studentId, actor, classNames, sessionNames, termNames),
             buildAttendance(studentId),
             buildSubjects(student.getClassId()),
             buildClassHistory(studentId, classNames, sessionNames));
@@ -159,10 +160,13 @@ public class StudentProfileService {
 
     private List<ResultItem> buildResults(
         Long studentId,
+        SecurityUser actor,
         Map<Long, String> classNames,
         Map<Long, String> sessionNames,
         Map<Long, String> termNames) {
+        boolean parentViewer = actor != null && actor.getRole() == User.Role.PARENT;
         return termResultRepository.findByStudentIdOrderByCreatedAtDesc(studentId).stream()
+            .filter(result -> !parentViewer || result.getPublishedAt() != null)
             .limit(12)
             .map(result -> toResultItem(result, classNames, sessionNames, termNames))
             .toList();

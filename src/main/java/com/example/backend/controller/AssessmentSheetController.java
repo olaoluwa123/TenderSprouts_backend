@@ -3,10 +3,14 @@ package com.example.backend.controller;
 import com.example.backend.dto.assessment.AssessmentSheetResponse;
 import com.example.backend.dto.assessment.PublishAssessmentSheetRequest;
 import com.example.backend.dto.assessment.SaveAssessmentSheetRequest;
+import com.example.backend.dto.parentreport.StudentAssessmentReportResponse;
 import com.example.backend.entity.enums.AssessmentSheetType;
 import com.example.backend.security.SecurityUtils;
 import com.example.backend.service.AssessmentSheetService;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -35,6 +39,37 @@ public class AssessmentSheetController {
         @RequestParam(required = false) Integer weekNumber) {
         return assessmentSheetService.getSheet(
             type, classId, termId, weekNumber, SecurityUtils.requireCurrentUser());
+    }
+
+    @GetMapping("/preview")
+    @PreAuthorize("hasAnyRole('ADMIN','TEACHER')")
+    public StudentAssessmentReportResponse preview(
+        @RequestParam AssessmentSheetType type,
+        @RequestParam Long classId,
+        @RequestParam Long termId,
+        @RequestParam(required = false) Integer weekNumber,
+        @RequestParam Long studentId) {
+        return assessmentSheetService.preview(
+            type, classId, termId, weekNumber, studentId, SecurityUtils.requireCurrentUser());
+    }
+
+    @GetMapping("/preview/pdf")
+    @PreAuthorize("hasAnyRole('ADMIN','TEACHER')")
+    public ResponseEntity<byte[]> previewPdf(
+        @RequestParam AssessmentSheetType type,
+        @RequestParam Long classId,
+        @RequestParam Long termId,
+        @RequestParam(required = false) Integer weekNumber,
+        @RequestParam Long studentId) {
+        byte[] pdf = assessmentSheetService.previewPdf(
+            type, classId, termId, weekNumber, studentId, SecurityUtils.requireCurrentUser());
+        String filename = type == AssessmentSheetType.MIDTERM
+            ? "midterm-" + studentId + "-term-" + termId + ".pdf"
+            : "weekly-test-" + studentId + "-week-" + weekNumber + ".pdf";
+        return ResponseEntity.ok()
+            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+            .contentType(MediaType.APPLICATION_PDF)
+            .body(pdf);
     }
 
     @PutMapping

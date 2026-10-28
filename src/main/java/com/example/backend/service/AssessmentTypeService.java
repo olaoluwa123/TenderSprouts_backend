@@ -10,7 +10,9 @@ import com.example.backend.exception.ForbiddenException;
 import com.example.backend.exception.ResourceNotFoundException;
 import com.example.backend.repository.AssessmentTypeLookupRepository;
 import com.example.backend.security.SecurityUser;
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.Locale;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,9 +44,10 @@ public class AssessmentTypeService {
             .toList();
     }
 
+    /** Active types with a positive max score — these become columns on grading/result sheets. */
     public List<AssessmentTypeLookup> listWeightedActiveEntities() {
         return assessmentTypeLookupRepository.findByIsActiveTrueOrderBySortOrderAscCodeAsc().stream()
-            .filter(type -> type.getWeight() != null && type.getWeight().compareTo(java.math.BigDecimal.ZERO) > 0)
+            .filter(type -> type.getDefaultMaxScore() != null && type.getDefaultMaxScore().signum() > 0)
             .toList();
     }
 
@@ -64,7 +67,9 @@ public class AssessmentTypeService {
     @Transactional
     public AssessmentTypeResponse create(CreateAssessmentTypeRequest request, SecurityUser actor) {
         requireAdmin(actor);
-        String code = normalizeCode(request.code());
+        String code = request.code() != null && !request.code().isBlank()
+            ? normalizeCode(request.code())
+            : generateUniqueCode(request.name());
         if (assessmentTypeLookupRepository.existsByCode(code)) {
             throw new ConflictException("Assessment type code already exists");
         }
@@ -72,7 +77,7 @@ public class AssessmentTypeService {
         type.setCode(code);
         type.setName(request.name().trim());
         type.setDefaultMaxScore(request.defaultMaxScore());
-        type.setWeight(request.weight() != null ? request.weight() : java.math.BigDecimal.ZERO);
+        type.setWeight(BigDecimal.valueOf(100));
         type.setSortOrder(nextSortOrder());
         type.setIsActive(true);
         type = assessmentTypeLookupRepository.save(type);
@@ -91,15 +96,47 @@ public class AssessmentTypeService {
         if (request.defaultMaxScore() != null) {
             type.setDefaultMaxScore(request.defaultMaxScore());
         }
-        if (request.weight() != null) {
-            type.setWeight(request.weight());
-        }
         if (request.active() != null) {
             type.setIsActive(request.active());
+            // Keep legacy weight column in sync: active counts, inactive does not.
+            type.setWeight(Boolean.TRUE.equals(request.active()) ? BigDecimal.valueOf(100) : BigDecimal.ZERO);
         }
         type = assessmentTypeLookupRepository.save(type);
         auditService.logAdminAction(actor, "UPDATE", "assessment_type", type.getId(), type.getCode());
         return AssessmentTypeResponse.from(type);
+    }
+
+    private String generateUniqueCode(String name) {
+        String base = toCode(name);
+        if (!assessmentTypeLookupRepository.existsByCode(base)) {
+            return base;
+        }
+        for (int i = 2; i < 100; i++) {
+            String candidate = base.length() > 17 ? base.substring(0, 17) + "_" + i : base + "_" + i;
+            if (candidate.length() > 20) {
+                candidate = candidate.substring(0, 20);
+            }
+            if (!assessmentTypeLookupRepository.existsByCode(candidate)) {
+                return candidate;
+            }
+        }
+        throw new ConflictException("Could not generate a unique assessment type code");
+    }
+
+    static String toCode(String name) {
+        String cleaned = name == null ? "" : name.trim().toUpperCase(Locale.ROOT)
+            .replaceAll("[^A-Z0-9]+", "_")
+            .replaceAll("^_+|_+$", "");
+        if (cleaned.isEmpty()) {
+            cleaned = "TYPE";
+        }
+        if (!Character.isLetter(cleaned.charAt(0))) {
+            cleaned = "T_" + cleaned;
+        }
+        if (cleaned.length() > 20) {
+            cleaned = cleaned.substring(0, 20).replaceAll("_+$", "");
+        }
+        return cleaned;
     }
 
     private int nextSortOrder() {
@@ -111,7 +148,7 @@ public class AssessmentTypeService {
     }
 
     private String normalizeCode(String code) {
-        return code.trim().toUpperCase();
+        return code.trim().toUpperCase(Locale.ROOT);
     }
 
     private void requireAdmin(SecurityUser actor) {

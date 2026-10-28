@@ -1,10 +1,13 @@
 package com.example.backend.service;
 
+import com.example.backend.config.AppFrontendProperties;
 import com.example.backend.dto.behaviour.BehaviouralReportResponse;
 import com.example.backend.dto.behaviour.PublishBehaviouralReportsRequest;
 import com.example.backend.dto.behaviour.SaveBehaviouralReportsRequest;
+import com.example.backend.email.EmailAttachment;
 import com.example.backend.entity.BehaviouralReport;
 import com.example.backend.entity.Student;
+import com.example.backend.entity.Term;
 import com.example.backend.entity.User;
 import com.example.backend.entity.enums.BehaviourPeriodType;
 import com.example.backend.exception.ConflictException;
@@ -21,11 +24,15 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class BehaviouralReportService {
+
+    private static final Logger log = LoggerFactory.getLogger(BehaviouralReportService.class);
 
     private final BehaviouralReportRepository behaviouralReportRepository;
     private final StudentRepository studentRepository;
@@ -36,6 +43,10 @@ public class BehaviouralReportService {
     private final ActiveSessionService activeSessionService;
     private final ActiveTermService activeTermService;
     private final AuditService auditService;
+    private final ParentPublishedReportService parentPublishedReportService;
+    private final ParentNotifyService parentNotifyService;
+    private final EmailService emailService;
+    private final AppFrontendProperties frontendProperties;
 
     public BehaviouralReportService(
         BehaviouralReportRepository behaviouralReportRepository,
@@ -46,7 +57,11 @@ public class BehaviouralReportService {
         AuthorizationService authorizationService,
         ActiveSessionService activeSessionService,
         ActiveTermService activeTermService,
-        AuditService auditService) {
+        AuditService auditService,
+        ParentPublishedReportService parentPublishedReportService,
+        ParentNotifyService parentNotifyService,
+        EmailService emailService,
+        AppFrontendProperties frontendProperties) {
         this.behaviouralReportRepository = behaviouralReportRepository;
         this.studentRepository = studentRepository;
         this.schoolClassRepository = schoolClassRepository;
@@ -56,6 +71,10 @@ public class BehaviouralReportService {
         this.activeSessionService = activeSessionService;
         this.activeTermService = activeTermService;
         this.auditService = auditService;
+        this.parentPublishedReportService = parentPublishedReportService;
+        this.parentNotifyService = parentNotifyService;
+        this.emailService = emailService;
+        this.frontendProperties = frontendProperties;
     }
 
     @Transactional(readOnly = true)
@@ -151,15 +170,29 @@ public class BehaviouralReportService {
         List<BehaviouralReport> reports = behaviouralReportRepository
             .findByClassIdAndTermIdAndPeriodTypeAndWeekNumberOrderByStudentIdAsc(
                 request.classId(), request.termId(), periodType, week);
-        if (reports.isEmpty()) {
+        if (request.studentId() != null) {
+            Student student = studentRepository.findById(request.studentId())
+                .orElseThrow(() -> new ResourceNotFoundException("Student not found"));
+            if (!request.classId().equals(student.getClassId())) {
+                throw new ConflictException("Student does not belong to the selected class");
+            }
+            reports = reports.stream()
+                .filter(report -> request.studentId().equals(report.getStudentId()))
+                .toList();
+            if (reports.isEmpty()) {
+                throw new ConflictException("Save this pupil's behavioural report before publishing");
+            }
+        } else if (reports.isEmpty()) {
             throw new ConflictException("Save the behavioural report before publishing");
         }
 
         LocalDateTime now = LocalDateTime.now();
+        List<Long> newlyPublishedStudentIds = new ArrayList<>();
         for (BehaviouralReport report : reports) {
             if (report.getPublishedAt() == null) {
                 report.setPublishedAt(now);
                 behaviouralReportRepository.save(report);
+                newlyPublishedStudentIds.add(report.getStudentId());
             }
         }
 
@@ -168,9 +201,67 @@ public class BehaviouralReportService {
             "PUBLISH",
             "behavioural_reports",
             request.classId(),
-            periodType + "/week=" + week);
+            periodType + "/week=" + week
+                + (request.studentId() != null ? ",studentId=" + request.studentId() : ""));
+
+        if (!newlyPublishedStudentIds.isEmpty()) {
+            notifyParentsOfPublishedBehavioural(
+                newlyPublishedStudentIds, request.termId(), periodType, week, actor);
+        }
 
         return listForClass(request.classId(), request.termId(), periodType, week, actor);
+    }
+
+    private void notifyParentsOfPublishedBehavioural(
+        List<Long> studentIds,
+        Long termId,
+        BehaviourPeriodType periodType,
+        int week,
+        SecurityUser actor) {
+        String termName = termRepository.findById(termId).map(Term::getName).orElse("this term");
+        String reportLabel = periodType == BehaviourPeriodType.END_OF_TERM
+            ? "End of term — " + termName
+            : "Week " + week + " — " + termName;
+        String portalUrl = frontendProperties.getOrigin().replaceAll("/$", "") + "/parent/results";
+        Integer weekNumber = periodType == BehaviourPeriodType.END_OF_TERM ? null : week;
+
+        Map<Long, EmailAttachment> pdfByStudentId = new HashMap<>();
+        for (Long studentId : studentIds) {
+            try {
+                byte[] pdf = parentPublishedReportService.behaviouralPdf(
+                    studentId, termId, periodType, weekNumber, actor);
+                String filename = "behavioural-" + studentId + "-" + periodType.name().toLowerCase()
+                    + (weekNumber != null && weekNumber > 0 ? "-week-" + weekNumber : "")
+                    + ".pdf";
+                pdfByStudentId.put(studentId, new EmailAttachment(filename, "application/pdf", pdf));
+            } catch (Exception ex) {
+                log.warn(
+                    "Could not generate behavioural PDF for studentId={} termId={} period={} week={}",
+                    studentId,
+                    termId,
+                    periodType,
+                    week,
+                    ex);
+            }
+        }
+
+        parentNotifyService.notifyParentsForStudents(
+            studentIds,
+            (user, parent) -> {
+                List<Long> childIds = parentNotifyService.linkedStudentIdsForParent(parent.getId(), studentIds);
+                List<String> childNames = parentNotifyService.childNamesForParent(parent.getId(), studentIds);
+                List<EmailAttachment> attachments = childIds.stream()
+                    .map(pdfByStudentId::get)
+                    .filter(java.util.Objects::nonNull)
+                    .toList();
+                emailService.sendBehaviouralReportPublished(
+                    user.getEmail(),
+                    parent.getFullName(),
+                    String.join(", ", childNames),
+                    reportLabel,
+                    portalUrl,
+                    attachments);
+            });
     }
 
     private void validateClassTerm(Long classId, Long termId) {

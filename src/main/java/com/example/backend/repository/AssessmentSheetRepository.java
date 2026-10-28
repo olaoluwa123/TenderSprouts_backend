@@ -14,6 +14,8 @@ public interface AssessmentSheetRepository extends JpaRepository<AssessmentSheet
         Long termId,
         Integer weekNumber);
 
+    List<AssessmentSheet> findByClassIdAndTermId(Long classId, Long termId);
+
     List<AssessmentSheet> findByClassIdAndPublishedAtIsNotNull(Long classId);
 
     List<AssessmentSheet> findBySheetTypeAndTermIdAndWeekNumberAndPublishedAtIsNotNull(

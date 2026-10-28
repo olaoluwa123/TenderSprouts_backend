@@ -85,7 +85,7 @@ public class StudentController {
     @GetMapping("/{id}/profile")
     public StudentProfileResponse getProfile(@PathVariable Long id) {
         authorizationService.requireParentOrStaffForStudentRead(SecurityUtils.requireCurrentUser(), id);
-        return studentProfileService.getProfile(id);
+        return studentProfileService.getProfile(id, SecurityUtils.requireCurrentUser());
     }
 
     @PostMapping

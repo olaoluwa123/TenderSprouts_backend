@@ -1,6 +1,7 @@
 package com.example.backend.dto.student;
 
 import com.example.backend.entity.Student;
+import com.example.backend.entity.enums.ClassGroup;
 import com.example.backend.entity.enums.Gender;
 import com.example.backend.util.StudentAgeUtil;
 import java.time.LocalDate;
@@ -20,13 +21,18 @@ public record StudentResponse(
     boolean linkedToParent,
     String height,
     String weight,
-    Integer ageYears
+    Integer ageYears,
+    ClassGroup classGroup
 ) {
     public static StudentResponse from(Student student) {
         return from(student, false);
     }
 
     public static StudentResponse from(Student student, boolean linkedToParent) {
+        return from(student, linkedToParent, null);
+    }
+
+    public static StudentResponse from(Student student, boolean linkedToParent, ClassGroup classGroup) {
         return new StudentResponse(
             student.getId(),
             student.getFirstName(),
@@ -42,6 +48,7 @@ public record StudentResponse(
             linkedToParent,
             student.getHeight(),
             student.getWeight(),
-            StudentAgeUtil.yearsNow(student.getDateOfBirth()));
+            StudentAgeUtil.yearsNow(student.getDateOfBirth()),
+            classGroup);
     }
 }

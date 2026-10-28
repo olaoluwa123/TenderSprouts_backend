@@ -4,6 +4,7 @@ import com.example.backend.config.AppFrontendProperties;
 import com.example.backend.entity.Admin;
 import com.example.backend.entity.Parent;
 import com.example.backend.entity.PasswordResetToken;
+import com.example.backend.entity.RefreshToken;
 import com.example.backend.entity.Teacher;
 import com.example.backend.entity.User;
 import com.example.backend.repository.AdminRepository;
@@ -13,9 +14,11 @@ import com.example.backend.exception.ConflictException;
 import com.example.backend.exception.ResourceNotFoundException;
 import com.example.backend.exception.UnauthorizedException;
 import com.example.backend.repository.PasswordResetTokenRepository;
+import com.example.backend.repository.RefreshTokenRepository;
 import com.example.backend.repository.UserRepository;
 import com.example.backend.security.TokenHashUtil;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -32,6 +35,7 @@ public class PasswordResetService {
     private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
     private final AppFrontendProperties frontendProperties;
+    private final RefreshTokenRepository refreshTokenRepository;
 
     public PasswordResetService(
         UserRepository userRepository,
@@ -41,7 +45,8 @@ public class PasswordResetService {
         TeacherRepository teacherRepository,
         PasswordEncoder passwordEncoder,
         EmailService emailService,
-        AppFrontendProperties frontendProperties) {
+        AppFrontendProperties frontendProperties,
+        RefreshTokenRepository refreshTokenRepository) {
         this.userRepository = userRepository;
         this.passwordResetTokenRepository = passwordResetTokenRepository;
         this.adminRepository = adminRepository;
@@ -50,10 +55,12 @@ public class PasswordResetService {
         this.passwordEncoder = passwordEncoder;
         this.emailService = emailService;
         this.frontendProperties = frontendProperties;
+        this.refreshTokenRepository = refreshTokenRepository;
     }
 
     @Transactional
     public String issueResetToken(User user, boolean requireChangeOnLogin) {
+        consumeUnusedResetTokens(user.getId());
         String rawToken = UUID.randomUUID().toString();
         PasswordResetToken token = new PasswordResetToken();
         token.setUserId(user.getId());
@@ -121,7 +128,25 @@ public class PasswordResetService {
         user.setAccessTokenVersion(user.getAccessTokenVersion() + 1);
         userRepository.save(user);
 
-        token.setUsedAt(LocalDateTime.now());
-        passwordResetTokenRepository.save(token);
+        consumeUnusedResetTokens(user.getId());
+        revokeRefreshTokens(user.getId());
+    }
+
+    private void consumeUnusedResetTokens(Long userId) {
+        LocalDateTime now = LocalDateTime.now();
+        List<PasswordResetToken> unused = passwordResetTokenRepository.findByUserIdAndUsedAtIsNull(userId);
+        for (PasswordResetToken unusedToken : unused) {
+            unusedToken.setUsedAt(now);
+        }
+        passwordResetTokenRepository.saveAll(unused);
+    }
+
+    private void revokeRefreshTokens(Long userId) {
+        LocalDateTime now = LocalDateTime.now();
+        List<RefreshToken> active = refreshTokenRepository.findByUserIdAndRevokedAtIsNull(userId);
+        for (RefreshToken refresh : active) {
+            refresh.setRevokedAt(now);
+        }
+        refreshTokenRepository.saveAll(active);
     }
 }

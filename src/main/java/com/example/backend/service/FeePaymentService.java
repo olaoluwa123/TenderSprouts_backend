@@ -167,8 +167,6 @@ public class FeePaymentService {
         JsonNode data = verifyOrWebhookRoot.has("data") ? verifyOrWebhookRoot.path("data") : verifyOrWebhookRoot;
         String status = text(data, "status");
         if (status == null || !"success".equalsIgnoreCase(status)) {
-            payment.setStatus(PaymentStatus.FAILED);
-            paymentRepository.save(payment);
             throw new BadRequestException("Payment was not successful");
         }
 

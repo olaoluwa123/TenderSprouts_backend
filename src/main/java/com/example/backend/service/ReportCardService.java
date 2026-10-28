@@ -96,10 +96,12 @@ public class ReportCardService {
     }
 
     public ReportCardResponse getReportCard(Long studentId, Long termId, SecurityUser actor) {
-        TermResult result = termResultRepository.findByStudentIdAndTermId(studentId, termId)
-            .orElseThrow(() -> new ResourceNotFoundException("Term result not found"));
-        assertCanView(result, actor);
-        return buildReportCard(result);
+        return termResultRepository.findByStudentIdAndTermId(studentId, termId)
+            .map(result -> {
+                assertCanView(result, actor);
+                return buildReportCard(result);
+            })
+            .orElseGet(() -> previewFromSavedGrades(studentId, termId, actor));
     }
 
     public byte[] generatePdf(Long studentId, Long termId, SecurityUser actor) {
@@ -127,7 +129,7 @@ public class ReportCardService {
 
         List<AssessmentTypeLookup> weightedTypes = assessmentTypeLookupRepository
             .findByIsActiveTrueOrderBySortOrderAscCodeAsc().stream()
-            .filter(type -> type.getWeight() != null && type.getWeight().compareTo(BigDecimal.ZERO) > 0)
+            .filter(type -> type.getDefaultMaxScore() != null && type.getDefaultMaxScore().signum() > 0)
             .toList();
         Set<String> weightedTypeCodes = GradeScoringUtil.weightedTypeCodes(weightedTypes);
 
@@ -342,6 +344,40 @@ public class ReportCardService {
             return;
         }
         throw new ForbiddenException("Not allowed to view this report card");
+    }
+
+    private ReportCardResponse previewFromSavedGrades(Long studentId, Long termId, SecurityUser actor) {
+        if (actor.getRole() == User.Role.PARENT) {
+            throw new ForbiddenException("Report card not available until term results are published");
+        }
+        Student student = studentRepository.findById(studentId)
+            .orElseThrow(() -> new ResourceNotFoundException("Student not found"));
+        Term term = termRepository.findById(termId)
+            .orElseThrow(() -> new ResourceNotFoundException("Term not found"));
+        List<Grade> grades = gradeRepository.findByStudentIdAndTermId(studentId, termId);
+        if (grades.isEmpty()) {
+            throw new ResourceNotFoundException("Save grades before viewing the report");
+        }
+        Long classId = student.getClassId() != null ? student.getClassId() : grades.get(0).getClassId();
+        if (actor.getRole() == User.Role.TEACHER
+            && !teacherClassRepository.existsByTeacherIdAndClassIdAndIsActiveTrue(actor.getProfileId(), classId)) {
+            throw new ForbiddenException("Not allowed to view this report card");
+        }
+        if (actor.getRole() != User.Role.ADMIN && actor.getRole() != User.Role.TEACHER) {
+            throw new ForbiddenException("Not allowed to view this report card");
+        }
+        List<AssessmentTypeLookup> weightedTypes = assessmentTypeLookupRepository
+            .findByIsActiveTrueOrderBySortOrderAscCodeAsc().stream()
+            .filter(type -> type.getDefaultMaxScore() != null && type.getDefaultMaxScore().signum() > 0)
+            .toList();
+        TermResult draft = new TermResult();
+        draft.setStudentId(studentId);
+        draft.setTermId(termId);
+        draft.setSessionId(term.getSessionId());
+        draft.setClassId(classId);
+        draft.setAverageScore(GradeScoringUtil.computeTermAverage(
+            grades, GradeScoringUtil.weightedTypeCodes(weightedTypes)));
+        return buildReportCard(draft);
     }
 
     private static String formatStudentName(Student student) {

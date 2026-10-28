@@ -7,6 +7,7 @@ public record PublishBehaviouralReportsRequest(
     @NotNull Long classId,
     @NotNull Long termId,
     @NotNull BehaviourPeriodType periodType,
-    Integer weekNumber
+    Integer weekNumber,
+    Long studentId
 ) {
 }

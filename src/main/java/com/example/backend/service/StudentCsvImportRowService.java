@@ -4,9 +4,11 @@ import com.example.backend.dto.parent.OnboardParentForStudentRequest;
 import com.example.backend.dto.student.CreateStudentRequest;
 import com.example.backend.dto.student.ImportCsvRowResult;
 import com.example.backend.dto.student.StudentResponse;
+import com.example.backend.entity.User;
 import com.example.backend.entity.enums.Gender;
 import com.example.backend.exception.ApiException;
 import com.example.backend.repository.SchoolClassRepository;
+import com.example.backend.repository.UserRepository;
 import com.example.backend.security.SecurityUser;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
@@ -28,14 +30,17 @@ public class StudentCsvImportRowService {
     private final StudentService studentService;
     private final ParentService parentService;
     private final SchoolClassRepository schoolClassRepository;
+    private final UserRepository userRepository;
 
     public StudentCsvImportRowService(
         StudentService studentService,
         ParentService parentService,
-        SchoolClassRepository schoolClassRepository) {
+        SchoolClassRepository schoolClassRepository,
+        UserRepository userRepository) {
         this.studentService = studentService;
         this.parentService = parentService;
         this.schoolClassRepository = schoolClassRepository;
+        this.userRepository = userRepository;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -54,6 +59,11 @@ public class StudentCsvImportRowService {
             if (!EMAIL_PATTERN.matcher(parentEmail).matches()) {
                 throw new IllegalArgumentException("Invalid parent email: " + parentEmail);
             }
+            userRepository.findByEmail(parentEmail).ifPresent(existing -> {
+                if (existing.getRole() != User.Role.PARENT) {
+                    throw new IllegalArgumentException("Email already registered to a non-parent account");
+                }
+            });
 
             Long classId = schoolClassRepository.findFirstByNameIgnoreCase(className.trim())
                 .map(c -> c.getId())
@@ -116,7 +126,7 @@ public class StudentCsvImportRowService {
 
     private static Gender parseGender(String value) {
         if (value == null || value.isBlank()) {
-            return Gender.MALE;
+            throw new IllegalArgumentException("Missing required field: gender");
         }
         try {
             return Gender.valueOf(value.trim().toUpperCase(Locale.ROOT));

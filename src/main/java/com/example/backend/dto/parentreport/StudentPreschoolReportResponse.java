@@ -10,6 +10,7 @@ public record StudentPreschoolReportResponse(
     String className,
     Long termId,
     String termName,
+    Integer monthNumber,
     String sessionName,
     LocalDateTime publishedAt,
     String gender,

@@ -160,6 +160,87 @@ public class EmailService {
         enqueue(toEmail, subject, body.trim(), attachments);
     }
 
+    public void sendAssessmentSheetPublished(
+        String toEmail,
+        String parentName,
+        String childNames,
+        String reportLabel,
+        String portalUrl,
+        List<EmailAttachment> attachments) {
+        String greeting = parentGreeting(parentName);
+        String label = blankOr(reportLabel, "this assessment");
+        String children = blankOr(childNames, "your child");
+        String subject = "Assessment results ready — " + label;
+        String attachmentNote = pdfAttachmentNote(attachments, "assessment PDF(s)");
+        String body = """
+            %s
+
+            Assessment results for %s are now available for: %s.
+            %s
+            Sign in to the parent portal to view results and download reports:
+            %s
+
+            Warm regards,
+            Tender Sprouts School
+            """.formatted(greeting, label, children, attachmentNote, portalUrl);
+        enqueue(toEmail, subject, body.trim(), attachments);
+    }
+
+    public void sendBehaviouralReportPublished(
+        String toEmail,
+        String parentName,
+        String childNames,
+        String reportLabel,
+        String portalUrl,
+        List<EmailAttachment> attachments) {
+        String greeting = parentGreeting(parentName);
+        String label = blankOr(reportLabel, "this term");
+        String children = blankOr(childNames, "your child");
+        String subject = "Behavioural report ready — " + label;
+        String attachmentNote = pdfAttachmentNote(attachments, "behavioural report PDF(s)");
+        String body = """
+            %s
+
+            Behavioural reports for %s are now available for: %s.
+            %s
+            Sign in to the parent portal to view reports and download PDFs:
+            %s
+
+            Warm regards,
+            Tender Sprouts School
+            """.formatted(greeting, label, children, attachmentNote, portalUrl);
+        enqueue(toEmail, subject, body.trim(), attachments);
+    }
+
+    public void sendPreschoolReportPublished(
+        String toEmail,
+        String parentName,
+        String childNames,
+        String termName,
+        String periodLabel,
+        String portalUrl,
+        List<EmailAttachment> attachments) {
+        String greeting = parentGreeting(parentName);
+        String termLabel = blankOr(termName, "this term");
+        String period = blankOr(periodLabel, "End of term");
+        String when = termLabel + " · " + period;
+        String children = blankOr(childNames, "your child");
+        String subject = "Preschool report ready — " + when;
+        String attachmentNote = pdfAttachmentNote(attachments, "preschool report PDF(s)");
+        String body = """
+            %s
+
+            Preschool reports for %s are now available for: %s.
+            %s
+            Sign in to the parent portal to view reports and download PDFs:
+            %s
+
+            Warm regards,
+            Tender Sprouts School
+            """.formatted(greeting, when, children, attachmentNote, portalUrl);
+        enqueue(toEmail, subject, body.trim(), attachments);
+    }
+
     public void sendExamTimetablePublished(
         String toEmail,
         String parentName,
@@ -182,11 +263,96 @@ public class EmailService {
         enqueue(toEmail, subject, body.trim());
     }
 
+    public void sendAnnouncementPublished(
+        String toEmail,
+        String recipientName,
+        String title,
+        String content,
+        String portalUrl) {
+        enqueueAnnouncement(toEmail, recipientName, title, content, portalUrl, false);
+    }
+
+    public void sendAnnouncementUpdated(
+        String toEmail,
+        String recipientName,
+        String title,
+        String content,
+        String portalUrl) {
+        enqueueAnnouncement(toEmail, recipientName, title, content, portalUrl, true);
+    }
+
+    private void enqueueAnnouncement(
+        String toEmail,
+        String recipientName,
+        String title,
+        String content,
+        String portalUrl,
+        boolean updated) {
+        String greeting = recipientName != null && !recipientName.isBlank()
+            ? "Dear " + recipientName + ","
+            : "Hello,";
+        String titleLabel = blankOr(title, "School announcement");
+        String snippet = truncateAnnouncementBody(content);
+        String subject = updated
+            ? "School announcement updated — " + titleLabel
+            : "School announcement — " + titleLabel;
+        String intro = updated
+            ? "A school announcement has been updated:"
+            : "A new school announcement has been posted:";
+        String body = """
+            %s
+
+            %s
+
+            %s
+
+            %s
+
+            Sign in to the portal to read it in full:
+            %s
+
+            Warm regards,
+            Tender Sprouts School
+            """.formatted(greeting, intro, titleLabel, snippet, portalUrl);
+        enqueue(toEmail, subject, body.trim());
+    }
+
+    private static String truncateAnnouncementBody(String content) {
+        if (content == null || content.isBlank()) {
+            return "(See portal for details.)";
+        }
+        String trimmed = content.trim().replaceAll("\\s+", " ");
+        if (trimmed.length() <= 500) {
+            return trimmed;
+        }
+        return trimmed.substring(0, 497) + "...";
+    }
+
     private void enqueue(String to, String subject, String body) {
         enqueue(to, subject, body, List.of());
     }
 
     private void enqueue(String to, String subject, String body, List<EmailAttachment> attachments) {
         emailPublisher.publish(EmailJob.initial(to, subject, body, attachments));
+    }
+
+    private static String parentGreeting(String parentName) {
+        return parentName != null && !parentName.isBlank()
+            ? "Dear " + parentName + ","
+            : "Dear parent,";
+    }
+
+    private static String blankOr(String value, String fallback) {
+        return value != null && !value.isBlank() ? value : fallback;
+    }
+
+    private static String pdfAttachmentNote(List<EmailAttachment> attachments, String pdfLabel) {
+        if (attachments == null || attachments.isEmpty()) {
+            return "\n";
+        }
+        return """
+
+            We have attached the %s for your convenience. You can also download them any time from the portal.
+            """.formatted(pdfLabel);
     }
 }

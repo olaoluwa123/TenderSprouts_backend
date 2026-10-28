@@ -1,5 +1,6 @@
 package com.example.backend.controller;
 
+import com.example.backend.dto.announcement.AnnouncementEmailBackfillResponse;
 import com.example.backend.dto.announcement.AnnouncementResponse;
 import com.example.backend.dto.announcement.CreateAnnouncementRequest;
 import com.example.backend.dto.announcement.UpdateAnnouncementRequest;
@@ -45,6 +46,12 @@ public class AnnouncementController {
     @PreAuthorize("hasAnyRole('ADMIN', 'TEACHER')")
     public List<AnnouncementResponse> mine() {
         return announcementService.mine(SecurityUtils.requireCurrentUser());
+    }
+
+    @PostMapping("/backfill-emails")
+    @PreAuthorize("hasRole('ADMIN')")
+    public AnnouncementEmailBackfillResponse backfillEmails() {
+        return announcementService.backfillEmails(SecurityUtils.requireCurrentUser());
     }
 
     @GetMapping("/{id}")

@@ -12,6 +12,7 @@ import com.example.backend.repository.StudentRepository;
 import com.example.backend.repository.TeacherClassRepository;
 import com.example.backend.security.SecurityUser;
 import com.example.backend.security.SecurityUtils;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
@@ -106,6 +107,15 @@ public class AuthorizationService {
             .filter(tc -> Boolean.TRUE.equals(tc.getIsActive()))
             .map(TeacherClass::getClassId)
             .collect(Collectors.toSet());
+    }
+
+    public void requireSelfOrAdminTeacher(SecurityUser user, Long teacherId) {
+        if (user.getRole() == User.Role.ADMIN) {
+            return;
+        }
+        if (user.getRole() != User.Role.TEACHER || !Objects.equals(user.getProfileId(), teacherId)) {
+            throw new ForbiddenException("You can only view your own teacher profile");
+        }
     }
 
     public void requireTeacherAccessToParent(SecurityUser user, Long parentId) {

@@ -3,13 +3,18 @@ package com.example.backend.service;
 import com.example.backend.dto.assessment.AssessmentSheetResponse;
 import com.example.backend.dto.assessment.PublishAssessmentSheetRequest;
 import com.example.backend.dto.assessment.SaveAssessmentSheetRequest;
+import com.example.backend.dto.parentreport.StudentAssessmentReportResponse;
 import com.example.backend.entity.AssessmentSheet;
 import com.example.backend.entity.AssessmentSheetCell;
+import com.example.backend.entity.AssessmentSheetPublication;
 import com.example.backend.entity.AssessmentSheetColumn;
 import com.example.backend.entity.AssessmentSheetScoreType;
 import com.example.backend.entity.ClassSubject;
+import com.example.backend.config.AppFrontendProperties;
+import com.example.backend.email.EmailAttachment;
 import com.example.backend.entity.Student;
 import com.example.backend.entity.Subject;
+import com.example.backend.entity.Term;
 import com.example.backend.entity.User;
 import com.example.backend.entity.enums.AssessmentSheetType;
 import com.example.backend.entity.enums.ClassGroup;
@@ -18,6 +23,7 @@ import com.example.backend.exception.ForbiddenException;
 import com.example.backend.exception.ResourceNotFoundException;
 import com.example.backend.repository.AssessmentSheetCellRepository;
 import com.example.backend.repository.AssessmentSheetColumnRepository;
+import com.example.backend.repository.AssessmentSheetPublicationRepository;
 import com.example.backend.repository.AssessmentSheetRepository;
 import com.example.backend.repository.AssessmentSheetScoreTypeRepository;
 import com.example.backend.repository.ClassSubjectRepository;
@@ -33,21 +39,27 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AssessmentSheetService {
 
+    private static final Logger log = LoggerFactory.getLogger(AssessmentSheetService.class);
     private static final BigDecimal DEFAULT_MAX = new BigDecimal("100");
 
     private final AssessmentSheetRepository assessmentSheetRepository;
     private final AssessmentSheetColumnRepository columnRepository;
     private final AssessmentSheetCellRepository cellRepository;
+    private final AssessmentSheetPublicationRepository publicationRepository;
     private final AssessmentSheetScoreTypeRepository scoreTypeRepository;
     private final StudentRepository studentRepository;
     private final ClassSubjectRepository classSubjectRepository;
@@ -59,11 +71,16 @@ public class AssessmentSheetService {
     private final ActiveSessionService activeSessionService;
     private final ActiveTermService activeTermService;
     private final AuditService auditService;
+    private final ParentPublishedReportService parentPublishedReportService;
+    private final ParentNotifyService parentNotifyService;
+    private final EmailService emailService;
+    private final AppFrontendProperties frontendProperties;
 
     public AssessmentSheetService(
         AssessmentSheetRepository assessmentSheetRepository,
         AssessmentSheetColumnRepository columnRepository,
         AssessmentSheetCellRepository cellRepository,
+        AssessmentSheetPublicationRepository publicationRepository,
         AssessmentSheetScoreTypeRepository scoreTypeRepository,
         StudentRepository studentRepository,
         ClassSubjectRepository classSubjectRepository,
@@ -74,10 +91,15 @@ public class AssessmentSheetService {
         AuthorizationService authorizationService,
         ActiveSessionService activeSessionService,
         ActiveTermService activeTermService,
-        AuditService auditService) {
+        AuditService auditService,
+        ParentPublishedReportService parentPublishedReportService,
+        ParentNotifyService parentNotifyService,
+        EmailService emailService,
+        AppFrontendProperties frontendProperties) {
         this.assessmentSheetRepository = assessmentSheetRepository;
         this.columnRepository = columnRepository;
         this.cellRepository = cellRepository;
+        this.publicationRepository = publicationRepository;
         this.scoreTypeRepository = scoreTypeRepository;
         this.studentRepository = studentRepository;
         this.classSubjectRepository = classSubjectRepository;
@@ -89,9 +111,13 @@ public class AssessmentSheetService {
         this.activeSessionService = activeSessionService;
         this.activeTermService = activeTermService;
         this.auditService = auditService;
+        this.parentPublishedReportService = parentPublishedReportService;
+        this.parentNotifyService = parentNotifyService;
+        this.emailService = emailService;
+        this.frontendProperties = frontendProperties;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public AssessmentSheetResponse getSheet(
         AssessmentSheetType type,
         Long classId,
@@ -105,7 +131,56 @@ public class AssessmentSheetService {
         AssessmentSheet sheet = assessmentSheetRepository
             .findBySheetTypeAndClassIdAndTermIdAndWeekNumber(type, classId, termId, week)
             .orElse(null);
+        if (sheet != null) {
+            ensureClassSubjectsOnUnpublishedSheet(sheet);
+        }
         return buildResponse(type, classId, termId, week, sheet);
+    }
+
+    @Transactional(readOnly = true)
+    public StudentAssessmentReportResponse preview(
+        AssessmentSheetType type,
+        Long classId,
+        Long termId,
+        Integer weekNumber,
+        Long studentId,
+        SecurityUser actor) {
+        AssessmentSheet sheet = requireSavedSheet(type, classId, termId, weekNumber, studentId, actor);
+        Student student = studentRepository.findById(studentId)
+            .orElseThrow(() -> new ResourceNotFoundException("Student not found"));
+        return parentPublishedReportService.previewAssessment(student, sheet);
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] previewPdf(
+        AssessmentSheetType type,
+        Long classId,
+        Long termId,
+        Integer weekNumber,
+        Long studentId,
+        SecurityUser actor) {
+        return parentPublishedReportService.previewAssessmentPdf(
+            preview(type, classId, termId, weekNumber, studentId, actor));
+    }
+
+    private AssessmentSheet requireSavedSheet(
+        AssessmentSheetType type,
+        Long classId,
+        Long termId,
+        Integer weekNumber,
+        Long studentId,
+        SecurityUser actor) {
+        int week = normalizeWeek(type, weekNumber);
+        validateClassTerm(classId, termId);
+        authorizationService.requireTeacherForClass(actor, classId);
+        Student student = studentRepository.findById(studentId)
+            .orElseThrow(() -> new ResourceNotFoundException("Student not found"));
+        if (!classId.equals(student.getClassId())) {
+            throw new ConflictException("Student does not belong to the selected class");
+        }
+        return assessmentSheetRepository
+            .findBySheetTypeAndClassIdAndTermIdAndWeekNumber(type, classId, termId, week)
+            .orElseThrow(() -> new ConflictException("Save the sheet before viewing the report"));
     }
 
     @Transactional
@@ -152,12 +227,25 @@ public class AssessmentSheetService {
             .map(SaveAssessmentSheetRequest.ColumnInput::id)
             .filter(id -> id != null)
             .collect(Collectors.toSet());
+        Set<String> requiredSubjects = new HashSet<>();
+        if (sheet.getPublishedAt() == null && Objects.equals(request.termId(), currentActiveTermId())) {
+            for (AssessmentSheetResponse.Column seeded : seedSubjectColumns(request.classId())) {
+                if (seeded.name() != null) {
+                    requiredSubjects.add(seeded.name().trim().toLowerCase());
+                }
+            }
+        }
 
         for (AssessmentSheetColumn existing : existingColumns) {
-            if (!keepIds.contains(existing.getId())) {
-                cellRepository.deleteByColumnId(existing.getId());
-                columnRepository.delete(existing);
+            if (keepIds.contains(existing.getId())) {
+                continue;
             }
+            String existingName = existing.getName() != null ? existing.getName().trim().toLowerCase() : "";
+            if (requiredSubjects.contains(existingName)) {
+                continue;
+            }
+            cellRepository.deleteByColumnId(existing.getId());
+            columnRepository.delete(existing);
         }
 
         Map<String, AssessmentSheetColumn> byClientKey = new LinkedHashMap<>();
@@ -224,6 +312,7 @@ public class AssessmentSheetService {
             sheet.getId(),
             type + ",classId=" + request.classId() + ",week=" + week);
 
+        ensureClassSubjectsOnUnpublishedSheet(sheet);
         return buildResponse(type, request.classId(), request.termId(), week, sheet);
     }
 
@@ -239,19 +328,140 @@ public class AssessmentSheetService {
             .findBySheetTypeAndClassIdAndTermIdAndWeekNumber(
                 type, request.classId(), request.termId(), week)
             .orElseThrow(() -> new ConflictException("Save the sheet before publishing"));
-        if (sheet.getPublishedAt() == null) {
-            sheet.setPublishedAt(LocalDateTime.now());
-            sheet = assessmentSheetRepository.save(sheet);
+
+        if (request.studentId() != null) {
+            publishOneStudent(sheet, type, request.termId(), week, request.studentId(), actor);
+        } else {
+            boolean firstPublish = sheet.getPublishedAt() == null;
+            if (firstPublish) {
+                sheet.setPublishedAt(LocalDateTime.now());
+                sheet = assessmentSheetRepository.save(sheet);
+            }
+
+            auditService.logAdminAction(
+                actor,
+                "PUBLISH",
+                "assessment_sheet",
+                sheet.getId(),
+                type + ",classId=" + request.classId() + ",week=" + week);
+
+            if (firstPublish) {
+                Set<Long> alreadySent = publicationRepository.findBySheetId(sheet.getId()).stream()
+                    .map(AssessmentSheetPublication::getStudentId)
+                    .collect(Collectors.toCollection(HashSet::new));
+                Set<Long> studentIds = studentsOnSheet(sheet);
+                studentIds.removeAll(alreadySent);
+                notifyParentsOfPublishedSheet(sheet, type, request.termId(), week, studentIds, actor);
+            }
         }
+
+        return buildResponse(type, request.classId(), request.termId(), week, sheet);
+    }
+
+    private void publishOneStudent(
+        AssessmentSheet sheet,
+        AssessmentSheetType type,
+        Long termId,
+        int week,
+        Long studentId,
+        SecurityUser actor) {
+        Student student = studentRepository.findById(studentId)
+            .orElseThrow(() -> new ResourceNotFoundException("Student not found"));
+        if (!sheet.getClassId().equals(student.getClassId())) {
+            throw new ConflictException("Student does not belong to the selected class");
+        }
+        if (sheet.getPublishedAt() != null
+            || publicationRepository.findBySheetIdAndStudentId(sheet.getId(), studentId).isPresent()) {
+            return;
+        }
+        if (cellRepository.findBySheetIdAndStudentId(sheet.getId(), studentId).isEmpty()) {
+            throw new ConflictException("Save this pupil's scores before publishing");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        AssessmentSheetPublication publication = new AssessmentSheetPublication();
+        publication.setSheetId(sheet.getId());
+        publication.setStudentId(studentId);
+        publication.setPublishedAt(now);
+        publicationRepository.save(publication);
 
         auditService.logAdminAction(
             actor,
             "PUBLISH",
             "assessment_sheet",
             sheet.getId(),
-            type + ",classId=" + request.classId() + ",week=" + week);
+            type + ",classId=" + sheet.getClassId() + ",week=" + week + ",studentId=" + studentId);
 
-        return buildResponse(type, request.classId(), request.termId(), week, sheet);
+        notifyParentsOfPublishedSheet(sheet, type, termId, week, Set.of(studentId), actor);
+    }
+
+    private Set<Long> studentsOnSheet(AssessmentSheet sheet) {
+        Set<Long> studentIds = cellRepository.findBySheetId(sheet.getId()).stream()
+            .map(AssessmentSheetCell::getStudentId)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (studentIds.isEmpty()) {
+            for (Student student : activeStudentsInClass(sheet.getClassId())) {
+                studentIds.add(student.getId());
+            }
+        }
+        return studentIds;
+    }
+
+    private void notifyParentsOfPublishedSheet(
+        AssessmentSheet sheet,
+        AssessmentSheetType type,
+        Long termId,
+        int week,
+        Set<Long> studentIds,
+        SecurityUser actor) {
+        if (studentIds == null || studentIds.isEmpty()) {
+            return;
+        }
+
+        String termName = termRepository.findById(termId).map(Term::getName).orElse("this term");
+        String reportLabel = type == AssessmentSheetType.MIDTERM
+            ? "Midterm — " + termName
+            : "Weekly test week " + week + " — " + termName;
+        String portalUrl = frontendProperties.getOrigin().replaceAll("/$", "") + "/parent/results";
+        Integer weekNumber = type == AssessmentSheetType.MIDTERM ? null : week;
+
+        Map<Long, EmailAttachment> pdfByStudentId = new HashMap<>();
+        for (Long studentId : studentIds) {
+            try {
+                byte[] pdf = parentPublishedReportService.assessmentPdf(
+                    studentId, type, termId, weekNumber, actor);
+                String filename = type == AssessmentSheetType.MIDTERM
+                    ? "midterm-" + studentId + "-term-" + termId + ".pdf"
+                    : "weekly-test-" + studentId + "-week-" + week + ".pdf";
+                pdfByStudentId.put(studentId, new EmailAttachment(filename, "application/pdf", pdf));
+            } catch (Exception ex) {
+                log.warn(
+                    "Could not generate assessment PDF for studentId={} type={} termId={} week={}",
+                    studentId,
+                    type,
+                    termId,
+                    week,
+                    ex);
+            }
+        }
+
+        parentNotifyService.notifyParentsForStudents(
+            studentIds,
+            (user, parent) -> {
+                List<Long> childIds = parentNotifyService.linkedStudentIdsForParent(parent.getId(), studentIds);
+                List<String> childNames = parentNotifyService.childNamesForParent(parent.getId(), studentIds);
+                List<EmailAttachment> attachments = childIds.stream()
+                    .map(pdfByStudentId::get)
+                    .filter(Objects::nonNull)
+                    .toList();
+                emailService.sendAssessmentSheetPublished(
+                    user.getEmail(),
+                    parent.getFullName(),
+                    String.join(", ", childNames),
+                    reportLabel,
+                    portalUrl,
+                    attachments);
+            });
     }
 
     private Map<String, AssessmentSheetScoreType> upsertScoreTypes(
@@ -324,6 +534,7 @@ public class AssessmentSheetService {
         List<AssessmentSheetResponse.ScoreType> types = new ArrayList<>();
         List<AssessmentSheetResponse.Column> columns = new ArrayList<>();
         Map<Long, Map<Long, Map<String, AssessmentSheetCell>>> cellsByStudent = new HashMap<>();
+        Map<Long, LocalDateTime> publishedByStudent = new HashMap<>();
 
         if (sheet != null && sheet.getId() != null) {
             List<AssessmentSheetScoreType> persistedTypes =
@@ -349,6 +560,11 @@ public class AssessmentSheetService {
                     .computeIfAbsent(cell.getStudentId(), id -> new HashMap<>())
                     .computeIfAbsent(cell.getColumnId(), id -> new HashMap<>())
                     .put(cell.getTypeCode(), cell);
+            }
+            if (sheet.getPublishedAt() == null) {
+                for (AssessmentSheetPublication publication : publicationRepository.findBySheetId(sheet.getId())) {
+                    publishedByStudent.put(publication.getStudentId(), publication.getPublishedAt());
+                }
             }
         }
 
@@ -386,11 +602,16 @@ public class AssessmentSheetService {
                 }
                 scores.put(scoreKey, typeScores);
             }
+            LocalDateTime pupilPublishedAt = sheet != null ? sheet.getPublishedAt() : null;
+            if (pupilPublishedAt == null) {
+                pupilPublishedAt = publishedByStudent.get(student.getId());
+            }
             pupils.add(new AssessmentSheetResponse.PupilRow(
                 student.getId(),
                 formatStudentName(student),
                 student.getAdmissionNumber(),
-                scores));
+                scores,
+                pupilPublishedAt));
         }
 
         return new AssessmentSheetResponse(
@@ -403,6 +624,96 @@ public class AssessmentSheetService {
             types,
             columns,
             pupils);
+    }
+
+    @Transactional
+    public void addSubjectToUnpublishedCurrentSheets(Long classId, String subjectName) {
+        if (classId == null || subjectName == null || subjectName.isBlank()) {
+            return;
+        }
+        Long termId = currentActiveTermId();
+        if (termId == null) {
+            return;
+        }
+        for (AssessmentSheet sheet : unpublishedCurrentSheets(classId, termId)) {
+            addColumnIfMissing(sheet, subjectName.trim());
+        }
+    }
+
+    @Transactional
+    public void removeSubjectFromUnpublishedCurrentSheets(Long classId, String subjectName) {
+        if (classId == null || subjectName == null || subjectName.isBlank()) {
+            return;
+        }
+        Long termId = currentActiveTermId();
+        if (termId == null) {
+            return;
+        }
+        String wanted = subjectName.trim();
+        for (AssessmentSheet sheet : unpublishedCurrentSheets(classId, termId)) {
+            for (AssessmentSheetColumn column : columnRepository.findBySheetIdOrderBySortOrderAscIdAsc(sheet.getId())) {
+                if (column.getName() != null && column.getName().trim().equalsIgnoreCase(wanted)) {
+                    cellRepository.deleteByColumnId(column.getId());
+                    columnRepository.delete(column);
+                }
+            }
+        }
+    }
+
+    private void ensureClassSubjectsOnUnpublishedSheet(AssessmentSheet sheet) {
+        if (sheet == null || sheet.getId() == null || sheet.getPublishedAt() != null) {
+            return;
+        }
+        Long activeTermId = currentActiveTermId();
+        if (activeTermId == null || !activeTermId.equals(sheet.getTermId())) {
+            return;
+        }
+        for (AssessmentSheetResponse.Column seeded : seedSubjectColumns(sheet.getClassId())) {
+            addColumnIfMissing(sheet, seeded.name());
+        }
+    }
+
+    private void addColumnIfMissing(AssessmentSheet sheet, String subjectName) {
+        if (sheet.getPublishedAt() != null || subjectName == null || subjectName.isBlank()) {
+            return;
+        }
+        List<AssessmentSheetColumn> existing = columnRepository.findBySheetIdOrderBySortOrderAscIdAsc(sheet.getId());
+        for (AssessmentSheetColumn column : existing) {
+            if (column.getName() != null && column.getName().trim().equalsIgnoreCase(subjectName.trim())) {
+                return;
+            }
+        }
+        int nextOrder = existing.stream()
+            .map(AssessmentSheetColumn::getSortOrder)
+            .filter(Objects::nonNull)
+            .mapToInt(Integer::intValue)
+            .max()
+            .orElse(-1) + 1;
+        BigDecimal maxScore = existing.stream()
+            .map(AssessmentSheetColumn::getMaxScore)
+            .filter(Objects::nonNull)
+            .findFirst()
+            .orElse(DEFAULT_MAX);
+        AssessmentSheetColumn column = new AssessmentSheetColumn();
+        column.setSheetId(sheet.getId());
+        column.setName(subjectName.trim());
+        column.setSortOrder(nextOrder);
+        column.setMaxScore(maxScore);
+        columnRepository.save(column);
+    }
+
+    private List<AssessmentSheet> unpublishedCurrentSheets(Long classId, Long termId) {
+        return assessmentSheetRepository.findByClassIdAndTermId(classId, termId).stream()
+            .filter(sheet -> sheet.getPublishedAt() == null)
+            .toList();
+    }
+
+    private Long currentActiveTermId() {
+        try {
+            return activeTermService.requireActiveTermId();
+        } catch (RuntimeException ex) {
+            return null;
+        }
     }
 
     private List<AssessmentSheetResponse.Column> seedSubjectColumns(Long classId) {

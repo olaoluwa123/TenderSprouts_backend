@@ -7,6 +7,7 @@ import com.example.backend.dto.parentreport.StudentPreschoolReportResponse;
 import com.example.backend.entity.AcademicSession;
 import com.example.backend.entity.AssessmentSheet;
 import com.example.backend.entity.AssessmentSheetCell;
+import com.example.backend.entity.AssessmentSheetPublication;
 import com.example.backend.entity.AssessmentSheetColumn;
 import com.example.backend.entity.AssessmentSheetScoreType;
 import com.example.backend.entity.BehaviouralReport;
@@ -28,6 +29,7 @@ import com.example.backend.exception.ResourceNotFoundException;
 import com.example.backend.repository.AcademicSessionRepository;
 import com.example.backend.repository.AssessmentSheetCellRepository;
 import com.example.backend.repository.AssessmentSheetColumnRepository;
+import com.example.backend.repository.AssessmentSheetPublicationRepository;
 import com.example.backend.repository.AssessmentSheetRepository;
 import com.example.backend.repository.AssessmentSheetScoreTypeRepository;
 import com.example.backend.repository.AttendanceRepository;
@@ -53,6 +55,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
@@ -68,6 +71,7 @@ public class ParentPublishedReportService {
     private final AcademicSessionRepository academicSessionRepository;
     private final SchoolClassRepository schoolClassRepository;
     private final AssessmentSheetRepository assessmentSheetRepository;
+    private final AssessmentSheetPublicationRepository publicationRepository;
     private final AssessmentSheetColumnRepository columnRepository;
     private final AssessmentSheetScoreTypeRepository scoreTypeRepository;
     private final AssessmentSheetCellRepository cellRepository;
@@ -87,6 +91,7 @@ public class ParentPublishedReportService {
         AcademicSessionRepository academicSessionRepository,
         SchoolClassRepository schoolClassRepository,
         AssessmentSheetRepository assessmentSheetRepository,
+        AssessmentSheetPublicationRepository publicationRepository,
         AssessmentSheetColumnRepository columnRepository,
         AssessmentSheetScoreTypeRepository scoreTypeRepository,
         AssessmentSheetCellRepository cellRepository,
@@ -104,6 +109,7 @@ public class ParentPublishedReportService {
         this.academicSessionRepository = academicSessionRepository;
         this.schoolClassRepository = schoolClassRepository;
         this.assessmentSheetRepository = assessmentSheetRepository;
+        this.publicationRepository = publicationRepository;
         this.columnRepository = columnRepository;
         this.scoreTypeRepository = scoreTypeRepository;
         this.cellRepository = cellRepository;
@@ -131,7 +137,8 @@ public class ParentPublishedReportService {
                 sheet.getClassId(),
                 sheet.getWeekNumber(),
                 null,
-                sheet.getPublishedAt()));
+                publishedAtFor(sheet, student.getId()),
+                null));
         }
         for (BehaviouralReport report : behaviouralReportRepository
             .findByStudentIdAndPublishedAtIsNotNullOrderByTermIdAscPeriodTypeAscWeekNumberAsc(studentId)) {
@@ -142,7 +149,8 @@ public class ParentPublishedReportService {
                 report.getClassId(),
                 report.getWeekNumber(),
                 report.getPeriodType().name(),
-                report.getPublishedAt()));
+                report.getPublishedAt(),
+                null));
         }
         for (PreschoolReport report : publishedPreschoolReportsFor(student)) {
             items.add(toItem(
@@ -152,7 +160,8 @@ public class ParentPublishedReportService {
                 report.getClassId(),
                 null,
                 null,
-                report.getPublishedAt()));
+                report.getPublishedAt(),
+                report.getMonthNumber()));
         }
 
         items.sort(Comparator
@@ -218,15 +227,25 @@ public class ParentPublishedReportService {
     public StudentPreschoolReportResponse getPreschoolReport(
         Long studentId,
         Long termId,
+        Integer monthNumber,
         SecurityUser actor) {
         Student student = requireStudent(studentId, actor);
-        PreschoolReport report = requirePublishedPreschool(student, termId);
+        PreschoolReport report = requirePublishedPreschool(student, termId, PreschoolReportService.requireMonth(monthNumber));
         return buildPreschool(student, report);
     }
 
     @Transactional(readOnly = true)
-    public byte[] preschoolPdf(Long studentId, Long termId, SecurityUser actor) {
-        return pdfGenerator.generatePreschool(getPreschoolReport(studentId, termId, actor));
+    public byte[] preschoolPdf(Long studentId, Long termId, Integer monthNumber, SecurityUser actor) {
+        return pdfGenerator.generatePreschool(getPreschoolReport(studentId, termId, monthNumber, actor));
+    }
+
+    @Transactional(readOnly = true)
+    public StudentAssessmentReportResponse previewAssessment(Student student, AssessmentSheet sheet) {
+        return buildAssessment(student, sheet);
+    }
+
+    public byte[] previewAssessmentPdf(StudentAssessmentReportResponse report) {
+        return pdfGenerator.generateAssessment(report);
     }
 
     private Student requireStudent(Long studentId, SecurityUser actor) {
@@ -248,11 +267,39 @@ public class ParentPublishedReportService {
             .map(AssessmentSheetCell::getSheetId)
             .collect(Collectors.toCollection(LinkedHashSet::new));
         for (AssessmentSheet sheet : assessmentSheetRepository.findAllById(sheetIds)) {
-            if (sheet.getPublishedAt() != null) {
+            if (isPublishedForStudent(sheet, student.getId())) {
                 byId.put(sheet.getId(), sheet);
             }
         }
+        for (AssessmentSheetPublication publication : publicationRepository.findByStudentId(student.getId())) {
+            assessmentSheetRepository.findById(publication.getSheetId())
+                .ifPresent(sheet -> byId.put(sheet.getId(), sheet));
+        }
         return new LinkedHashSet<>(byId.values());
+    }
+
+    private LocalDateTime publishedAtFor(AssessmentSheet sheet, Long studentId) {
+        if (sheet.getPublishedAt() != null) {
+            return sheet.getPublishedAt();
+        }
+        return publicationRepository.findBySheetIdAndStudentId(sheet.getId(), studentId)
+            .map(AssessmentSheetPublication::getPublishedAt)
+            .orElse(null);
+    }
+
+    private boolean isPublishedForStudent(AssessmentSheet sheet, Long studentId) {
+        return publishedAtFor(sheet, studentId) != null;
+    }
+
+    private boolean hideEmptyColumnAddedAfterPublish(
+        AssessmentSheetColumn column,
+        Map<String, BigDecimal> scores,
+        LocalDateTime publishedAt) {
+        if (publishedAt == null || column.getCreatedAt() == null) {
+            return false;
+        }
+        boolean hasScore = scores.values().stream().anyMatch(Objects::nonNull);
+        return !hasScore && column.getCreatedAt().isAfter(publishedAt);
     }
 
     private AssessmentSheet requirePublishedSheet(
@@ -260,10 +307,23 @@ public class ParentPublishedReportService {
         AssessmentSheetType type,
         Long termId,
         int week) {
-        AssessmentSheet sheet = assessmentSheetRepository
-            .findBySheetTypeAndClassIdAndTermIdAndWeekNumber(type, student.getClassId(), termId, week)
-            .filter(s -> s.getPublishedAt() != null)
-            .orElse(null);
+        AssessmentSheet sheet = student.getClassId() == null
+            ? null
+            : assessmentSheetRepository
+                .findBySheetTypeAndClassIdAndTermIdAndWeekNumber(type, student.getClassId(), termId, week)
+                .filter(candidate -> isPublishedForStudent(candidate, student.getId()))
+                .orElse(null);
+        if (sheet == null) {
+            sheet = publicationRepository.findByStudentId(student.getId()).stream()
+                .map(publication -> assessmentSheetRepository.findById(publication.getSheetId()).orElse(null))
+                .filter(candidate -> candidate != null
+                    && candidate.getSheetType() == type
+                    && termId.equals(candidate.getTermId())
+                    && candidate.getWeekNumber() == week
+                    && !cellRepository.findBySheetIdAndStudentId(candidate.getId(), student.getId()).isEmpty())
+                .findFirst()
+                .orElse(null);
+        }
         if (sheet == null) {
             sheet = assessmentSheetRepository
                 .findBySheetTypeAndTermIdAndWeekNumberAndPublishedAtIsNotNull(type, termId, week)
@@ -274,7 +334,7 @@ public class ParentPublishedReportService {
                 .findFirst()
                 .orElse(null);
         }
-        if (sheet == null || sheet.getPublishedAt() == null) {
+        if (sheet == null || !isPublishedForStudent(sheet, student.getId())) {
             throw new ForbiddenException("This report is not published yet");
         }
         return sheet;
@@ -302,12 +362,16 @@ public class ParentPublishedReportService {
         List<StudentAssessmentReportResponse.ScoreType> typeRows = types.stream()
             .map(t -> new StudentAssessmentReportResponse.ScoreType(t.getCode(), t.getName(), t.getMaxScore()))
             .toList();
+        LocalDateTime publishedAt = publishedAtFor(sheet, student.getId());
         List<StudentAssessmentReportResponse.SubjectRow> subjects = new ArrayList<>();
         for (AssessmentSheetColumn column : columns) {
             Map<String, BigDecimal> scores = new LinkedHashMap<>();
             Map<String, BigDecimal> stored = byColumn.getOrDefault(column.getId(), Map.of());
             for (AssessmentSheetScoreType type : types) {
                 scores.put(type.getCode(), stored.get(type.getCode()));
+            }
+            if (hideEmptyColumnAddedAfterPublish(column, scores, publishedAt)) {
+                continue;
             }
             subjects.add(new StudentAssessmentReportResponse.SubjectRow(column.getName(), scores));
         }
@@ -318,7 +382,7 @@ public class ParentPublishedReportService {
                 ? midtermTotalPercentageAverage(subjects, typeRows)
                 : null;
 
-        PupilHeader header = pupilHeader(student, sheet.getClassId(), term, sheet.getPublishedAt());
+        PupilHeader header = pupilHeader(student, sheet.getClassId(), term, publishedAt);
         return new StudentAssessmentReportResponse(
             student.getId(),
             formatStudentName(student),
@@ -329,7 +393,7 @@ public class ParentPublishedReportService {
             session != null ? session.getName() : null,
             sheet.getSheetType().name(),
             sheet.getWeekNumber(),
-            sheet.getPublishedAt(),
+            publishedAt,
             averageScore,
             header.gender(),
             header.ageYears(),
@@ -398,17 +462,18 @@ public class ParentPublishedReportService {
         return new ArrayList<>(byId.values());
     }
 
-    private PreschoolReport requirePublishedPreschool(Student student, Long termId) {
+    private PreschoolReport requirePublishedPreschool(Student student, Long termId, int month) {
         if (student.getClassId() != null) {
             PreschoolReport report = preschoolReportRepository
-                .findByClassIdAndTermId(student.getClassId(), termId)
+                .findByClassIdAndTermIdAndMonthNumber(student.getClassId(), termId, month)
                 .orElse(null);
             if (report != null && report.getPublishedAt() != null) {
                 return report;
             }
         }
         for (PreschoolReport report : publishedPreschoolReportsFor(student)) {
-            if (termId.equals(report.getTermId()) && report.getPublishedAt() != null) {
+            int reportMonth = report.getMonthNumber() == null ? 0 : report.getMonthNumber();
+            if (termId.equals(report.getTermId()) && reportMonth == month && report.getPublishedAt() != null) {
                 return report;
             }
         }
@@ -441,6 +506,7 @@ public class ParentPublishedReportService {
             className,
             report.getTermId(),
             term != null ? term.getName() : null,
+            report.getMonthNumber() == null ? 0 : report.getMonthNumber(),
             session != null ? session.getName() : null,
             report.getPublishedAt(),
             header.gender(),
@@ -463,7 +529,8 @@ public class ParentPublishedReportService {
         Long classId,
         Integer weekNumber,
         String periodType,
-        java.time.LocalDateTime publishedAt) {
+        java.time.LocalDateTime publishedAt,
+        Integer monthNumber) {
         Term term = termId != null ? termRepository.findById(termId).orElse(null) : null;
         Long resolvedSessionId = term != null ? term.getSessionId() : sessionId;
         AcademicSession session = resolvedSessionId != null
@@ -481,7 +548,8 @@ public class ParentPublishedReportService {
             className,
             weekNumber,
             periodType,
-            publishedAt);
+            publishedAt,
+            monthNumber);
     }
 
     private static BigDecimal percentageAverage(

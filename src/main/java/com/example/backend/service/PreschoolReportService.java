@@ -1,8 +1,10 @@
 package com.example.backend.service;
 
+import com.example.backend.config.AppFrontendProperties;
 import com.example.backend.dto.preschool.PreschoolReportResponse;
 import com.example.backend.dto.preschool.PublishPreschoolReportRequest;
 import com.example.backend.dto.preschool.SavePreschoolReportRequest;
+import com.example.backend.email.EmailAttachment;
 import com.example.backend.entity.ClassSubject;
 import com.example.backend.entity.PreschoolReport;
 import com.example.backend.entity.PreschoolReportComment;
@@ -31,11 +33,15 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class PreschoolReportService {
+
+    private static final Logger log = LoggerFactory.getLogger(PreschoolReportService.class);
 
     private final PreschoolReportRepository preschoolReportRepository;
     private final PreschoolReportCommentRepository commentRepository;
@@ -50,6 +56,10 @@ public class PreschoolReportService {
     private final ActiveSessionService activeSessionService;
     private final ActiveTermService activeTermService;
     private final AuditService auditService;
+    private final ParentPublishedReportService parentPublishedReportService;
+    private final ParentNotifyService parentNotifyService;
+    private final EmailService emailService;
+    private final AppFrontendProperties frontendProperties;
 
     public PreschoolReportService(
         PreschoolReportRepository preschoolReportRepository,
@@ -64,7 +74,11 @@ public class PreschoolReportService {
         AuthorizationService authorizationService,
         ActiveSessionService activeSessionService,
         ActiveTermService activeTermService,
-        AuditService auditService) {
+        AuditService auditService,
+        ParentPublishedReportService parentPublishedReportService,
+        ParentNotifyService parentNotifyService,
+        EmailService emailService,
+        AppFrontendProperties frontendProperties) {
         this.preschoolReportRepository = preschoolReportRepository;
         this.commentRepository = commentRepository;
         this.summaryRepository = summaryRepository;
@@ -78,18 +92,26 @@ public class PreschoolReportService {
         this.activeSessionService = activeSessionService;
         this.activeTermService = activeTermService;
         this.auditService = auditService;
+        this.parentPublishedReportService = parentPublishedReportService;
+        this.parentNotifyService = parentNotifyService;
+        this.emailService = emailService;
+        this.frontendProperties = frontendProperties;
     }
 
     @Transactional(readOnly = true)
-    public PreschoolReportResponse getSheet(Long classId, Long termId, SecurityUser actor) {
+    public PreschoolReportResponse getSheet(Long classId, Long termId, Integer monthNumber, SecurityUser actor) {
+        int month = requireMonth(monthNumber);
         validateClassTerm(classId, termId);
         authorizationService.requireTeacherForClass(actor, classId);
-        PreschoolReport report = preschoolReportRepository.findByClassIdAndTermId(classId, termId).orElse(null);
-        return toResponse(classId, termId, report);
+        PreschoolReport report = preschoolReportRepository
+            .findByClassIdAndTermIdAndMonthNumber(classId, termId, month)
+            .orElse(null);
+        return toResponse(classId, termId, month, report);
     }
 
     @Transactional
     public PreschoolReportResponse saveSheet(SavePreschoolReportRequest request, SecurityUser actor) {
+        int month = requireMonth(request.monthNumber());
         validateClassTerm(request.classId(), request.termId());
         activeTermService.requireMatchesActiveTermForWrite(request.termId(), actor);
         authorizationService.requireTeacherForClass(actor, request.classId());
@@ -101,10 +123,11 @@ public class PreschoolReportService {
             : activeSessionService.requireActiveSessionId();
 
         PreschoolReport report = preschoolReportRepository
-            .findByClassIdAndTermId(request.classId(), request.termId())
+            .findByClassIdAndTermIdAndMonthNumber(request.classId(), request.termId(), month)
             .orElseGet(PreschoolReport::new);
         report.setClassId(request.classId());
         report.setTermId(request.termId());
+        report.setMonthNumber(month);
         report.setSessionId(sessionId);
         report.setTeacherId(resolveTeacherId(actor));
         report = preschoolReportRepository.save(report);
@@ -160,21 +183,23 @@ public class PreschoolReportService {
             "UPSERT",
             "preschool_reports",
             request.classId(),
-            "term=" + request.termId());
+            "term=" + request.termId() + ",month=" + month);
 
-        return toResponse(request.classId(), request.termId(), report);
+        return toResponse(request.classId(), request.termId(), month, report);
     }
 
     @Transactional
     public PreschoolReportResponse publishSheet(PublishPreschoolReportRequest request, SecurityUser actor) {
+        int month = requireMonth(request.monthNumber());
         validateClassTerm(request.classId(), request.termId());
         activeTermService.requireMatchesActiveTermForWrite(request.termId(), actor);
         authorizationService.requireTeacherForClass(actor, request.classId());
 
         PreschoolReport report = preschoolReportRepository
-            .findByClassIdAndTermId(request.classId(), request.termId())
+            .findByClassIdAndTermIdAndMonthNumber(request.classId(), request.termId(), month)
             .orElseThrow(() -> new ConflictException("Save the preschool report before publishing"));
-        if (report.getPublishedAt() == null) {
+        boolean firstPublish = report.getPublishedAt() == null;
+        if (firstPublish) {
             report.setPublishedAt(LocalDateTime.now());
             preschoolReportRepository.save(report);
         }
@@ -184,12 +209,64 @@ public class PreschoolReportService {
             "PUBLISH",
             "preschool_reports",
             request.classId(),
-            "term=" + request.termId());
+            "term=" + request.termId() + ",month=" + month);
 
-        return toResponse(request.classId(), request.termId(), report);
+        if (firstPublish) {
+            notifyParentsOfPublishedPreschool(request.classId(), request.termId(), month, actor);
+        }
+
+        return toResponse(request.classId(), request.termId(), month, report);
     }
 
-    private PreschoolReportResponse toResponse(Long classId, Long termId, PreschoolReport report) {
+    private void notifyParentsOfPublishedPreschool(Long classId, Long termId, int month, SecurityUser actor) {
+        List<Long> studentIds = activeStudentsInClass(classId).stream()
+            .map(Student::getId)
+            .toList();
+        if (studentIds.isEmpty()) {
+            return;
+        }
+
+        String termName = termRepository.findById(termId).map(Term::getName).orElse("this term");
+        String portalUrl = frontendProperties.getOrigin().replaceAll("/$", "") + "/parent/results";
+
+        Map<Long, EmailAttachment> pdfByStudentId = new HashMap<>();
+        for (Long studentId : studentIds) {
+            try {
+                byte[] pdf = parentPublishedReportService.preschoolPdf(studentId, termId, month, actor);
+                String filename = month > 0
+                    ? "preschool-" + studentId + "-term-" + termId + "-month-" + month + ".pdf"
+                    : "preschool-" + studentId + "-term-" + termId + ".pdf";
+                pdfByStudentId.put(studentId, new EmailAttachment(filename, "application/pdf", pdf));
+            } catch (Exception ex) {
+                log.warn(
+                    "Could not generate preschool PDF for studentId={} termId={}",
+                    studentId,
+                    termId,
+                    ex);
+            }
+        }
+
+        parentNotifyService.notifyParentsForStudents(
+            studentIds,
+            (user, parent) -> {
+                List<Long> childIds = parentNotifyService.linkedStudentIdsForParent(parent.getId(), studentIds);
+                List<String> childNames = parentNotifyService.childNamesForParent(parent.getId(), studentIds);
+                List<EmailAttachment> attachments = childIds.stream()
+                    .map(pdfByStudentId::get)
+                    .filter(java.util.Objects::nonNull)
+                    .toList();
+                emailService.sendPreschoolReportPublished(
+                    user.getEmail(),
+                    parent.getFullName(),
+                    String.join(", ", childNames),
+                    termName,
+                    periodLabel(month),
+                    portalUrl,
+                    attachments);
+            });
+    }
+
+    private PreschoolReportResponse toResponse(Long classId, Long termId, int month, PreschoolReport report) {
         List<PreschoolReportResponse.Subject> subjects = classSubjectNames(classId).entrySet().stream()
             .map(entry -> new PreschoolReportResponse.Subject(entry.getKey(), entry.getValue()))
             .toList();
@@ -228,9 +305,22 @@ public class PreschoolReportService {
             report != null ? report.getId() : null,
             classId,
             termId,
+            month,
             report != null ? report.getPublishedAt() : null,
             subjects,
             pupils);
+    }
+
+    static int requireMonth(Integer monthNumber) {
+        int month = monthNumber == null ? 0 : monthNumber;
+        if (month < 0 || month > 4) {
+            throw new ConflictException("Month must be from 1 to 4, or omitted for the end-of-term report");
+        }
+        return month;
+    }
+
+    static String periodLabel(int month) {
+        return month > 0 ? "Month " + month : "End of term";
     }
 
     private Map<Long, String> classSubjectNames(Long classId) {
