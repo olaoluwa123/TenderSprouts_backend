@@ -13,6 +13,9 @@ public record AssessmentSheetResponse(
     Long termId,
     Integer weekNumber,
     LocalDateTime publishedAt,
+    LocalDateTime submittedAt,
+    Long submittedByTeacherId,
+    String submissionStatus,
     List<ScoreType> types,
     List<Column> columns,
     List<PupilRow> pupils

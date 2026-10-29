@@ -43,6 +43,12 @@ public class AssessmentSheet extends AuditableEntity {
     @Column(name = "published_at")
     private LocalDateTime publishedAt;
 
+    @Column(name = "submitted_at")
+    private LocalDateTime submittedAt;
+
+    @Column(name = "submitted_by_teacher_id")
+    private Long submittedByTeacherId;
+
     public Long getId() {
         return id;
     }
@@ -105,5 +111,21 @@ public class AssessmentSheet extends AuditableEntity {
 
     public void setPublishedAt(LocalDateTime publishedAt) {
         this.publishedAt = publishedAt;
+    }
+
+    public LocalDateTime getSubmittedAt() {
+        return submittedAt;
+    }
+
+    public void setSubmittedAt(LocalDateTime submittedAt) {
+        this.submittedAt = submittedAt;
+    }
+
+    public Long getSubmittedByTeacherId() {
+        return submittedByTeacherId;
+    }
+
+    public void setSubmittedByTeacherId(Long submittedByTeacherId) {
+        this.submittedByTeacherId = submittedByTeacherId;
     }
 }

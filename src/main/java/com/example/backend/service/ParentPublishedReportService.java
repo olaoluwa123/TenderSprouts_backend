@@ -359,7 +359,12 @@ public class ParentPublishedReportService {
                 .put(cell.getTypeCode(), cell.getScore());
         }
 
-        List<StudentAssessmentReportResponse.ScoreType> typeRows = types.stream()
+        List<AssessmentSheetScoreType> visibleTypes = types.stream()
+            .filter(t -> sheet.getSheetType() != AssessmentSheetType.MIDTERM
+                || t.getCode() == null
+                || !"PROJECT".equalsIgnoreCase(t.getCode()))
+            .toList();
+        List<StudentAssessmentReportResponse.ScoreType> typeRows = visibleTypes.stream()
             .map(t -> new StudentAssessmentReportResponse.ScoreType(t.getCode(), t.getName(), t.getMaxScore()))
             .toList();
         LocalDateTime publishedAt = publishedAtFor(sheet, student.getId());
@@ -367,7 +372,7 @@ public class ParentPublishedReportService {
         for (AssessmentSheetColumn column : columns) {
             Map<String, BigDecimal> scores = new LinkedHashMap<>();
             Map<String, BigDecimal> stored = byColumn.getOrDefault(column.getId(), Map.of());
-            for (AssessmentSheetScoreType type : types) {
+            for (AssessmentSheetScoreType type : visibleTypes) {
                 scores.put(type.getCode(), stored.get(type.getCode()));
             }
             if (hideEmptyColumnAddedAfterPublish(column, scores, publishedAt)) {

@@ -22,4 +22,7 @@ public interface AssessmentSheetRepository extends JpaRepository<AssessmentSheet
         AssessmentSheetType sheetType,
         Long termId,
         Integer weekNumber);
+
+    List<AssessmentSheet> findBySheetTypeAndSubmittedAtIsNotNullAndPublishedAtIsNullOrderBySubmittedAtDesc(
+        AssessmentSheetType sheetType);
 }

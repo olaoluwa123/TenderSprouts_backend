@@ -1,6 +1,7 @@
 package com.example.backend.controller;
 
 import com.example.backend.dto.assessment.AssessmentSheetResponse;
+import com.example.backend.dto.assessment.MidtermSubmissionSummaryResponse;
 import com.example.backend.dto.assessment.PublishAssessmentSheetRequest;
 import com.example.backend.dto.assessment.SaveAssessmentSheetRequest;
 import com.example.backend.dto.parentreport.StudentAssessmentReportResponse;
@@ -8,6 +9,7 @@ import com.example.backend.entity.enums.AssessmentSheetType;
 import com.example.backend.security.SecurityUtils;
 import com.example.backend.service.AssessmentSheetService;
 import jakarta.validation.Valid;
+import java.util.List;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -76,6 +78,30 @@ public class AssessmentSheetController {
     @PreAuthorize("hasAnyRole('ADMIN','TEACHER')")
     public AssessmentSheetResponse save(@Valid @RequestBody SaveAssessmentSheetRequest request) {
         return assessmentSheetService.saveSheet(request, SecurityUtils.requireCurrentUser());
+    }
+
+    @GetMapping("/submissions")
+    @PreAuthorize("hasRole('ADMIN')")
+    public List<MidtermSubmissionSummaryResponse> submissions() {
+        return assessmentSheetService.listSubmittedMidterms(SecurityUtils.requireCurrentUser());
+    }
+
+    @PostMapping("/submit")
+    @PreAuthorize("hasRole('TEACHER')")
+    public AssessmentSheetResponse submit(@Valid @RequestBody PublishAssessmentSheetRequest request) {
+        return assessmentSheetService.submitSheet(request, SecurityUtils.requireCurrentUser());
+    }
+
+    @PostMapping("/approve")
+    @PreAuthorize("hasRole('ADMIN')")
+    public AssessmentSheetResponse approve(@Valid @RequestBody PublishAssessmentSheetRequest request) {
+        return assessmentSheetService.publishSheet(request, SecurityUtils.requireCurrentUser());
+    }
+
+    @PostMapping("/reject")
+    @PreAuthorize("hasRole('ADMIN')")
+    public AssessmentSheetResponse reject(@Valid @RequestBody PublishAssessmentSheetRequest request) {
+        return assessmentSheetService.rejectSheet(request, SecurityUtils.requireCurrentUser());
     }
 
     @PostMapping("/publish")

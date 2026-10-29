@@ -1,6 +1,7 @@
 package com.example.backend.service;
 
 import com.example.backend.dto.assessment.AssessmentSheetResponse;
+import com.example.backend.dto.assessment.MidtermSubmissionSummaryResponse;
 import com.example.backend.dto.assessment.PublishAssessmentSheetRequest;
 import com.example.backend.dto.assessment.SaveAssessmentSheetRequest;
 import com.example.backend.dto.parentreport.StudentAssessmentReportResponse;
@@ -10,6 +11,8 @@ import com.example.backend.entity.AssessmentSheetPublication;
 import com.example.backend.entity.AssessmentSheetColumn;
 import com.example.backend.entity.AssessmentSheetScoreType;
 import com.example.backend.entity.ClassSubject;
+import com.example.backend.entity.SchoolClass;
+import com.example.backend.entity.Teacher;
 import com.example.backend.config.AppFrontendProperties;
 import com.example.backend.email.EmailAttachment;
 import com.example.backend.entity.Student;
@@ -55,6 +58,7 @@ public class AssessmentSheetService {
 
     private static final Logger log = LoggerFactory.getLogger(AssessmentSheetService.class);
     private static final BigDecimal DEFAULT_MAX = new BigDecimal("100");
+    private static final String PROJECT_TYPE = "PROJECT";
 
     private final AssessmentSheetRepository assessmentSheetRepository;
     private final AssessmentSheetColumnRepository columnRepository;
@@ -132,6 +136,7 @@ public class AssessmentSheetService {
             .findBySheetTypeAndClassIdAndTermIdAndWeekNumber(type, classId, termId, week)
             .orElse(null);
         if (sheet != null) {
+            stripProjectFromMidterm(sheet);
             ensureClassSubjectsOnUnpublishedSheet(sheet);
         }
         return buildResponse(type, classId, termId, week, sheet);
@@ -208,6 +213,7 @@ public class AssessmentSheetService {
             .findBySheetTypeAndClassIdAndTermIdAndWeekNumber(
                 type, request.classId(), request.termId(), week)
             .orElseGet(AssessmentSheet::new);
+        requireMidtermEditable(type, sheet);
         sheet.setSheetType(type);
         sheet.setClassId(request.classId());
         sheet.setTermId(request.termId());
@@ -215,8 +221,15 @@ public class AssessmentSheetService {
         sheet.setSessionId(sessionId);
         sheet.setTeacherId(teacherId);
         sheet = assessmentSheetRepository.save(sheet);
+        stripProjectFromMidterm(sheet);
 
-        Map<String, AssessmentSheetScoreType> typesByCode = upsertScoreTypes(sheet, request.types());
+        List<SaveAssessmentSheetRequest.TypeInput> incomingTypes =
+            request.types() == null ? List.of() : request.types();
+        Map<String, AssessmentSheetScoreType> typesByCode = upsertScoreTypes(
+            sheet,
+            type == AssessmentSheetType.MIDTERM
+                ? incomingTypes.stream().filter(t -> !isProjectType(t.code())).toList()
+                : incomingTypes);
 
         List<AssessmentSheetColumn> existingColumns =
             columnRepository.findBySheetIdOrderBySortOrderAscIdAsc(sheet.getId());
@@ -329,33 +342,215 @@ public class AssessmentSheetService {
                 type, request.classId(), request.termId(), week)
             .orElseThrow(() -> new ConflictException("Save the sheet before publishing"));
 
+        if (type == AssessmentSheetType.MIDTERM) {
+            return approveMidterm(sheet, type, request.termId(), week, actor);
+        }
+
         if (request.studentId() != null) {
             publishOneStudent(sheet, type, request.termId(), week, request.studentId(), actor);
         } else {
-            boolean firstPublish = sheet.getPublishedAt() == null;
-            if (firstPublish) {
-                sheet.setPublishedAt(LocalDateTime.now());
-                sheet = assessmentSheetRepository.save(sheet);
-            }
-
-            auditService.logAdminAction(
-                actor,
-                "PUBLISH",
-                "assessment_sheet",
-                sheet.getId(),
-                type + ",classId=" + request.classId() + ",week=" + week);
-
-            if (firstPublish) {
-                Set<Long> alreadySent = publicationRepository.findBySheetId(sheet.getId()).stream()
-                    .map(AssessmentSheetPublication::getStudentId)
-                    .collect(Collectors.toCollection(HashSet::new));
-                Set<Long> studentIds = studentsOnSheet(sheet);
-                studentIds.removeAll(alreadySent);
-                notifyParentsOfPublishedSheet(sheet, type, request.termId(), week, studentIds, actor);
-            }
+            publishClassSheet(sheet, type, request.termId(), week, actor);
         }
 
         return buildResponse(type, request.classId(), request.termId(), week, sheet);
+    }
+
+    @Transactional
+    public AssessmentSheetResponse submitSheet(PublishAssessmentSheetRequest request, SecurityUser actor) {
+        if (request.type() != AssessmentSheetType.MIDTERM) {
+            throw new ConflictException("Only midterm reports are submitted to admin for approval");
+        }
+        if (actor.getRole() != User.Role.TEACHER || actor.getProfileId() == null) {
+            throw new ForbiddenException("Only teachers can submit midterm reports to admin");
+        }
+        int week = normalizeWeek(request.type(), request.weekNumber());
+        validateClassTerm(request.classId(), request.termId());
+        activeTermService.requireMatchesActiveTermForWrite(request.termId(), actor);
+        authorizationService.requireTeacherForClass(actor, request.classId());
+
+        AssessmentSheet sheet = assessmentSheetRepository
+            .findBySheetTypeAndClassIdAndTermIdAndWeekNumber(
+                request.type(), request.classId(), request.termId(), week)
+            .orElseThrow(() -> new ConflictException("Save the midterm sheet before submitting"));
+        stripProjectFromMidterm(sheet);
+        if (sheet.getPublishedAt() != null) {
+            throw new ConflictException("This midterm report is already approved for parents");
+        }
+        if (sheet.getSubmittedAt() != null) {
+            throw new ConflictException("Midterm report already submitted to admin");
+        }
+        if (cellRepository.findBySheetId(sheet.getId()).isEmpty()) {
+            throw new ConflictException("Enter scores for the class before submitting");
+        }
+
+        sheet.setSubmittedAt(LocalDateTime.now());
+        sheet.setSubmittedByTeacherId(actor.getProfileId());
+        sheet = assessmentSheetRepository.save(sheet);
+        auditService.logAdminAction(
+            actor,
+            "SUBMIT",
+            "assessment_sheet",
+            sheet.getId(),
+            "MIDTERM,classId=" + request.classId());
+        return buildResponse(request.type(), request.classId(), request.termId(), week, sheet);
+    }
+
+    @Transactional
+    public AssessmentSheetResponse rejectSheet(PublishAssessmentSheetRequest request, SecurityUser actor) {
+        if (actor.getRole() != User.Role.ADMIN) {
+            throw new ForbiddenException("Only admins can send midterm reports back to the teacher");
+        }
+        if (request.type() != AssessmentSheetType.MIDTERM) {
+            throw new ConflictException("Only midterm reports can be sent back for revision");
+        }
+        int week = normalizeWeek(request.type(), request.weekNumber());
+        validateClassTerm(request.classId(), request.termId());
+        AssessmentSheet sheet = assessmentSheetRepository
+            .findBySheetTypeAndClassIdAndTermIdAndWeekNumber(
+                request.type(), request.classId(), request.termId(), week)
+            .orElseThrow(() -> new ResourceNotFoundException("Midterm report not found"));
+        if (sheet.getPublishedAt() != null) {
+            throw new ConflictException("Approved midterm reports cannot be sent back");
+        }
+        if (sheet.getSubmittedAt() == null) {
+            throw new ConflictException("Only submitted midterm reports can be sent back");
+        }
+        sheet.setSubmittedAt(null);
+        sheet.setSubmittedByTeacherId(null);
+        sheet = assessmentSheetRepository.save(sheet);
+        auditService.logAdminAction(
+            actor,
+            "REJECT",
+            "assessment_sheet",
+            sheet.getId(),
+            "MIDTERM,classId=" + request.classId());
+        return buildResponse(request.type(), request.classId(), request.termId(), week, sheet);
+    }
+
+    @Transactional(readOnly = true)
+    public List<MidtermSubmissionSummaryResponse> listSubmittedMidterms(SecurityUser actor) {
+        if (actor.getRole() != User.Role.ADMIN) {
+            throw new ForbiddenException("Only admins can list submitted midterm reports");
+        }
+        return assessmentSheetRepository
+            .findBySheetTypeAndSubmittedAtIsNotNullAndPublishedAtIsNullOrderBySubmittedAtDesc(
+                AssessmentSheetType.MIDTERM)
+            .stream()
+            .map(this::toMidtermSummary)
+            .toList();
+    }
+
+    private AssessmentSheetResponse approveMidterm(
+        AssessmentSheet sheet,
+        AssessmentSheetType type,
+        Long termId,
+        int week,
+        SecurityUser actor) {
+        if (actor.getRole() != User.Role.ADMIN) {
+            throw new ForbiddenException("Only admins can approve midterm reports for parents");
+        }
+        stripProjectFromMidterm(sheet);
+        if (sheet.getPublishedAt() != null) {
+            return buildResponse(type, sheet.getClassId(), termId, week, sheet);
+        }
+        if (sheet.getSubmittedAt() == null) {
+            throw new ConflictException("The teacher must submit this midterm report before it can be approved");
+        }
+        publishClassSheet(sheet, type, termId, week, actor);
+        AssessmentSheet published = assessmentSheetRepository.findById(sheet.getId()).orElse(sheet);
+        return buildResponse(type, sheet.getClassId(), termId, week, published);
+    }
+
+    private void publishClassSheet(
+        AssessmentSheet sheet,
+        AssessmentSheetType type,
+        Long termId,
+        int week,
+        SecurityUser actor) {
+        boolean firstPublish = sheet.getPublishedAt() == null;
+        if (firstPublish) {
+            sheet.setPublishedAt(LocalDateTime.now());
+            assessmentSheetRepository.save(sheet);
+        }
+        auditService.logAdminAction(
+            actor,
+            "PUBLISH",
+            "assessment_sheet",
+            sheet.getId(),
+            type + ",classId=" + sheet.getClassId() + ",week=" + week);
+        if (firstPublish) {
+            Set<Long> alreadySent = publicationRepository.findBySheetId(sheet.getId()).stream()
+                .map(AssessmentSheetPublication::getStudentId)
+                .collect(Collectors.toCollection(HashSet::new));
+            Set<Long> studentIds = studentsOnSheet(sheet);
+            studentIds.removeAll(alreadySent);
+            notifyParentsOfPublishedSheet(sheet, type, termId, week, studentIds, actor);
+        }
+    }
+
+    private MidtermSubmissionSummaryResponse toMidtermSummary(AssessmentSheet sheet) {
+        String className = schoolClassRepository.findById(sheet.getClassId())
+            .map(SchoolClass::getName)
+            .orElse(null);
+        String termName = termRepository.findById(sheet.getTermId())
+            .map(Term::getName)
+            .orElse(null);
+        String teacherName = sheet.getSubmittedByTeacherId() != null
+            ? teacherRepository.findById(sheet.getSubmittedByTeacherId())
+                .map(Teacher::getFullName)
+                .orElse(null)
+            : null;
+        return new MidtermSubmissionSummaryResponse(
+            sheet.getId(),
+            sheet.getClassId(),
+            className,
+            sheet.getTermId(),
+            termName,
+            sheet.getSessionId(),
+            submissionStatus(sheet),
+            sheet.getSubmittedAt(),
+            sheet.getSubmittedByTeacherId(),
+            teacherName,
+            activeStudentsInClass(sheet.getClassId()).size());
+    }
+
+    private void requireMidtermEditable(AssessmentSheetType type, AssessmentSheet sheet) {
+        if (type != AssessmentSheetType.MIDTERM || sheet.getId() == null) {
+            return;
+        }
+        if (sheet.getPublishedAt() != null) {
+            throw new ConflictException("Approved midterm reports cannot be edited");
+        }
+        if (sheet.getSubmittedAt() != null) {
+            throw new ConflictException("Submitted midterm reports cannot be edited until admin sends them back");
+        }
+    }
+
+    private void stripProjectFromMidterm(AssessmentSheet sheet) {
+        if (sheet == null || sheet.getId() == null || sheet.getSheetType() != AssessmentSheetType.MIDTERM) {
+            return;
+        }
+        scoreTypeRepository.findBySheetIdAndCode(sheet.getId(), PROJECT_TYPE).ifPresent(type -> {
+            cellRepository.deleteBySheetIdAndTypeCode(sheet.getId(), PROJECT_TYPE);
+            scoreTypeRepository.delete(type);
+        });
+    }
+
+    private static boolean isProjectType(String code) {
+        return code != null && PROJECT_TYPE.equalsIgnoreCase(code.trim());
+    }
+
+    private static String submissionStatus(AssessmentSheet sheet) {
+        if (sheet == null) {
+            return "DRAFT";
+        }
+        if (sheet.getPublishedAt() != null) {
+            return "PUBLISHED";
+        }
+        if (sheet.getSubmittedAt() != null) {
+            return "SUBMITTED";
+        }
+        return "DRAFT";
     }
 
     private void publishOneStudent(
@@ -540,6 +735,9 @@ public class AssessmentSheetService {
             List<AssessmentSheetScoreType> persistedTypes =
                 scoreTypeRepository.findBySheetIdOrderBySortOrderAscIdAsc(sheet.getId());
             for (AssessmentSheetScoreType scoreType : persistedTypes) {
+                if (type == AssessmentSheetType.MIDTERM && isProjectType(scoreType.getCode())) {
+                    continue;
+                }
                 types.add(new AssessmentSheetResponse.ScoreType(
                     scoreType.getCode(),
                     scoreType.getName(),
@@ -621,6 +819,9 @@ public class AssessmentSheetService {
             termId,
             week,
             sheet != null ? sheet.getPublishedAt() : null,
+            sheet != null ? sheet.getSubmittedAt() : null,
+            sheet != null ? sheet.getSubmittedByTeacherId() : null,
+            submissionStatus(sheet),
             types,
             columns,
             pupils);
@@ -664,6 +865,9 @@ public class AssessmentSheetService {
         if (sheet == null || sheet.getId() == null || sheet.getPublishedAt() != null) {
             return;
         }
+        if (sheet.getSheetType() == AssessmentSheetType.MIDTERM && sheet.getSubmittedAt() != null) {
+            return;
+        }
         Long activeTermId = currentActiveTermId();
         if (activeTermId == null || !activeTermId.equals(sheet.getTermId())) {
             return;
@@ -705,6 +909,7 @@ public class AssessmentSheetService {
     private List<AssessmentSheet> unpublishedCurrentSheets(Long classId, Long termId) {
         return assessmentSheetRepository.findByClassIdAndTermId(classId, termId).stream()
             .filter(sheet -> sheet.getPublishedAt() == null)
+            .filter(sheet -> sheet.getSheetType() != AssessmentSheetType.MIDTERM || sheet.getSubmittedAt() == null)
             .toList();
     }
 
@@ -744,8 +949,7 @@ public class AssessmentSheetService {
             return List.of(
                 new DefaultScoreType("CLASS_WORK", "Class work", 0),
                 new DefaultScoreType("HOMEWORK", "Homework", 1),
-                new DefaultScoreType("TEST", "Test", 2),
-                new DefaultScoreType("PROJECT", "Project", 3));
+                new DefaultScoreType("TEST", "Test", 2));
         }
         return List.of(new DefaultScoreType("SCORE", "Score", 0));
     }
