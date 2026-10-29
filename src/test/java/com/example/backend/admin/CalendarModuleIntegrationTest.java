@@ -2,7 +2,9 @@ package com.example.backend.admin;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -33,6 +35,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -268,6 +271,73 @@ class CalendarModuleIntegrationTest {
         mockMvc.perform(get("/api/users/" + adminUserId + "/activity")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
             .andExpect(status().isOk());
+    }
+
+    @Test
+    void calendarPosterUploadViewAndDelete() throws Exception {
+        mockMvc.perform(get("/api/calendar/poster")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + parentToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.exists").value(false));
+
+        MockMultipartFile image = new MockMultipartFile(
+            "file",
+            "First Term Calendar.jpg",
+            "image/jpeg",
+            tinyJpeg());
+
+        mockMvc.perform(multipart("/api/calendar/poster")
+                .file(image)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + parentToken))
+            .andExpect(status().isForbidden());
+
+        mockMvc.perform(multipart("/api/calendar/poster")
+                .file(image)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.exists").value(true))
+            .andExpect(jsonPath("$.originalFilename").value("first_term_calendar.jpg"))
+            .andExpect(jsonPath("$.contentType").value("image/jpeg"));
+
+        mockMvc.perform(get("/api/calendar/poster")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + parentToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.exists").value(true));
+
+        mockMvc.perform(get("/api/calendar/poster/file")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + parentToken))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.IMAGE_JPEG))
+            .andExpect(content().bytes(tinyJpeg()));
+
+        mockMvc.perform(multipart("/api/calendar/poster")
+                .file(new MockMultipartFile("file", "note.txt", "text/plain", "not an image".getBytes()))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+            .andExpect(status().isBadRequest());
+
+        mockMvc.perform(delete("/api/calendar/poster")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+            .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/calendar/poster")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + parentToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.exists").value(false));
+    }
+
+    private static byte[] tinyJpeg() {
+        return new byte[] {
+            (byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 0x00, 0x10,
+            0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
+            0x00, 0x01, 0x00, 0x00, (byte) 0xFF, (byte) 0xDB, 0x00, 0x43,
+            0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08, 0x07, 0x07,
+            0x07, 0x09, 0x09, 0x08, 0x0A, 0x0C, 0x14, 0x0D, 0x0C, 0x0B,
+            0x0B, 0x0C, 0x19, 0x12, 0x13, 0x0F, 0x14, 0x1D, 0x1A, 0x1F,
+            0x1E, 0x1D, 0x1A, 0x1C, 0x1C, 0x20, 0x24, 0x2E, 0x27, 0x20,
+            0x22, 0x2C, 0x23, 0x1C, 0x1C, 0x28, 0x37, 0x29, 0x2C, 0x30,
+            0x31, 0x34, 0x34, 0x34, 0x1F, 0x27, 0x39, 0x3D, 0x38, 0x32,
+            0x3C, 0x2E, 0x33, 0x34, 0x32, (byte) 0xFF, (byte) 0xD9
+        };
     }
 
     private User saveUser(String email, User.Role role) {
